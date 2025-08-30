@@ -65,6 +65,47 @@ terraform apply
 ### 4. Знищення ресурсів
 terraform destroy
 
+
+## 🗂️ Робота з бекендом (S3 + DynamoDB)
+
+> ⚠️ Важливо: S3 bucket і DynamoDB для збереження state ще не існують перед першим запуском.
+
+1. Спочатку у файлі `backend.tf` залиште локальний бекенд:
+   ```hcl
+   terraform {
+     backend "local" {}
+   }
+
+2. Створіть ресурси для бекенду:
+
+terraform init
+terraform apply
+
+
+Це створить S3 bucket та DynamoDB table для блокування state.
+
+3. Тепер замініть backend.tf на конфіг із S3:
+
+terraform {
+  backend "s3" {
+    bucket         = "<your-bucket-name>"
+    key            = "lesson-5/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
+  }
+}
+
+
+4. Виконайте міграцію state у S3:
+
+terraform init -migrate-state
+
+
+Тепер state зберігається централізовано у S3 і захищений через DynamoDB locking.
+
+
+
 📤 Outputs
 
 Після apply Terraform виведе:
