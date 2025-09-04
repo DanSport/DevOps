@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "django-app.fullname" . }}
+  labels:
+    {{- include "django-app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 2 }}
+  selector:
+    matchLabels:
+      app: {{ include "django-app.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "django-app.name" . }}
+        {{- include "django-app.labels" . | nindent 8 }}
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: postgres:15
+          command: ['sh','-c','until pg_isready -h db -p 5432 -t 2; do echo "waiting for db"; sleep 2; done']
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          workingDir: /app/django_app
+          command: ["sh","-lc","python manage.py migrate --noinput"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "django-app.fullname" . }}-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: django-db-secret
+                  key: POSTGRES_PASSWORD
+      containers:
+        - name: {{ include "django-app.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          workingDir: /app/django_app
+          ports:
+            - containerPort: 8000
+          command: ["python","manage.py","runserver","0.0.0.0:8000"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "django-app.fullname" . }}-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: django-db-secret
+                  key: POSTGRES_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.health.path | default "/admin/login/" }}
+              port: 8000
+            initialDelaySeconds: {{ .Values.health.readinessInitialDelay | default 5 }}
+            periodSeconds: {{ .Values.health.readinessPeriod | default 5 }}
+
+            livenessProbe:
+              httpGet:
+                path: {{ .Values.health.path | default "/admin/login/" }}
+                port: 8000
+              initialDelaySeconds: {{ .Values.health.livenessInitialDelay | default 20 }}
+              periodSeconds: {{ .Values.health.livenessPeriod | default 10 }}
+          resources:
+            {{- toYaml (.Values.resources | default dict) | nindent 12 }}
+

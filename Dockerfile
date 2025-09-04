@@ -1,23 +1,26 @@
-FROM python:3.11-slim
+FROM python:3.12-alpine
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# Встановимо залежності, потрібні для psycopg[binary] і gunicorn мінімально
+RUN apk add --no-cache libpq
 
+# Папка застосунку
 WORKDIR /app
 
-# системні пакети (netcat для очікування БД, psycopg2 залежності)
-RUN apt-get update && apt-get install -y \
-    netcat-traditional build-essential libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
+# Спочатку лише requirements, щоб кешувався pip layer
 COPY requirements.txt .
+
+# Встановлення без кешу pip
+ENV PIP_NO_CACHE_DIR=1
 RUN pip install --no-cache-dir -r requirements.txt
 
-# копіюємо увесь проєкт
-COPY . .
-
-# робимо entrypoint виконуваним
+# Копіюємо вихідний код (лише Django-проєкт і entrypoint)
+COPY django_app/ ./django_app/
+COPY entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh
 
+# Для gunicorn – порт 8000
 EXPOSE 8000
-ENTRYPOINT ["/app/entrypoint.sh"]
+
+# За замовчуванням – старт gunicorn (менше навантаження і стабільніше, ніж runserver)
+WORKDIR /app/django_app
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "core.wsgi:application"]

@@ -1,0 +1,8 @@
+.git
+.terraform
+__pycache__/
+*.pyc
+.env
+lesson-5/
+lesson-7/
+*.log
