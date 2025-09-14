@@ -1,0 +1,78 @@
+pipeline {
+  agent { label 'default' }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+    disableConcurrentBuilds()
+  }
+
+  environment {
+    AWS_REGION = credentials('AWS_REGION')
+    ECR_URI    = credentials('ECR_URI')
+
+    SAFE_BRANCH = "${env.BRANCH_NAME?.replaceAll(/[^A-Za-z0-9_.-]/, '-') ?: 'main'}"
+    IMAGE_TAG   = "${SAFE_BRANCH}-${env.BUILD_NUMBER}"
+
+    // GitOps
+    GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'   // ← SSH, не HTTPS
+    GITOPS_BRANCH     = 'main'
+    GITOPS_CHART_PATH = 'charts/django-app'                     // ← узгоджено з Argo CD
+    GIT_CRED_ID       = 'gitops-ssh'
+  }
+
+  stages {
+    stage('Checkout source') {
+      steps { checkout scm }
+    }
+
+    stage('Build & Push (kaniko → ECR)') {
+      steps {
+        container('kaniko') {
+          sh """
+            /kaniko/executor \
+              --context="${workspace}" \
+              --dockerfile="${workspace}/Dockerfile" \
+              --destination="${ECR_URI}:${IMAGE_TAG}" \
+              --destination="${ECR_URI}:latest" \
+              --single-snapshot \
+              --cache=true \
+              --cache-ttl=48h
+          """
+        }
+      }
+    }
+
+    stage('Clone GitOps & Bump tag') {
+      steps {
+        sshagent (credentials: [env.GIT_CRED_ID]) {
+          sh """
+            rm -rf gitops && mkdir gitops
+            git clone --branch ${GITOPS_BRANCH} ${GITOPS_REPO_SSH} gitops
+
+            test -f "gitops/${GITOPS_CHART_PATH}/values.yaml" || { echo "values.yaml not found"; exit 1; }
+
+            # оновлюємо tag: <repo>:<tag> або просто <tag>, залежно від твоєї схеми
+            sed -i -E 's|^([[:space:]]*tag:[[:space:]]*).*$|\\1\"${IMAGE_TAG}\"|' "gitops/${GITOPS_CHART_PATH}/values.yaml"
+
+            cd gitops
+            git config user.email "ci@local"
+            git config user.name  "jenkins-ci"
+            git add "${GITOPS_CHART_PATH}/values.yaml"
+            git commit -m "ci: bump image tag to ${IMAGE_TAG}"
+            git push origin ${GITOPS_BRANCH}
+          """
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "✅ Pushed ${ECR_URI}:${IMAGE_TAG} and updated GitOps:${GITOPS_BRANCH}"
+    }
+    failure {
+      echo "❌ Pipeline failed. Check the logs above."
+    }
+  }
+}

@@ -1,0 +1,115 @@
+controller:
+  admin:
+    createSecret: true
+    username: "admin"
+    password: "changeme123"  # для продакшн винеси у секрет/var
+
+  serviceType: ClusterIP
+
+  persistence:
+    enabled: true
+    # existingClaim: jenkins  # ← вилучено, щоб Helm сам створив PVC
+    storageClass: gp3
+    size: 8Gi
+
+  # Вмикаємо JCasC і задаємо креденшели + podTemplate для Kaniko
+  JCasC:
+    enabled: true
+    configScripts:
+      credentials-and-agents: |
+        jenkins:
+          credentials:
+            system:
+              domainCredentials:
+                - credentials:
+                    - string:
+                        id: "AWS_REGION"
+                        description: "AWS region for ECR"
+                        secret: "${AWS_REGION:-eu-central-1}"
+                    - string:
+                        id: "ECR_URI"
+                        description: "ECR repository URI"
+                        secret: "${ECR_URI:-000000000000.dkr.ecr.eu-central-1.amazonaws.com/django-app}"
+                    - basicSSHUserPrivateKey:
+                        id: "gitops-ssh"
+                        description: "SSH key for GitOps repo"
+                        username: "git"
+                        privateKeySource:
+                          directEntry:
+                            privateKey: "${GITOPS_SSH_PRIVATE_KEY:-}"
+          nodes:
+            - permanent:
+                labelString: "default"
+                name: "k8s-agent"
+                numExecutors: 1
+                remoteFS: "/home/jenkins/agent"
+                retentionStrategy: "always"
+        tool:
+          git:
+            installations:
+              - name: "Default"
+                home: "git"
+
+      pod-template: |
+        jenkins:
+          clouds:
+            - kubernetes:
+                name: "kubernetes"
+                serverUrl: "https://kubernetes.default.svc"
+                namespace: "{{ .Release.Namespace }}"
+                jenkinsUrl: "http://{{ include "jenkins.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:8080"
+                templates:
+                  - name: "default"
+                    label: "default"
+                    serviceAccount: "{{ .Values.rbac.serviceAccountName | default (include "jenkins.serviceAccountName" .) }}"
+                    containers:
+                      - name: "kaniko"
+                        image: "gcr.io/kaniko-project/executor:latest"
+                        command:
+                          - "cat"
+                        ttyEnabled: true
+                        volumeMounts:
+                          - name: kaniko-cache
+                            mountPath: /kaniko/.cache
+                        env:
+                          - name: AWS_REGION
+                            valueFrom:
+                              secretKeyRef:
+                                name: jenkins-aws
+                                key: AWS_REGION
+                          - name: AWS_ACCESS_KEY_ID
+                            valueFrom:
+                              secretKeyRef:
+                                name: jenkins-aws
+                                key: AWS_ACCESS_KEY_ID
+                          - name: AWS_SECRET_ACCESS_KEY
+                            valueFrom:
+                              secretKeyRef:
+                                name: jenkins-aws
+                                key: AWS_SECRET_ACCESS_KEY
+                      - name: "git"
+                        image: "alpine/git:latest"
+                        command: ["cat"]
+                        ttyEnabled: true
+                    volumes:
+                      - name: kaniko-cache
+                        emptyDir: {}
+
+  installPlugins:
+    - kubernetes:4267.v6be2eb2f5d2a
+    - workflow-aggregator:596.v8c21c963d92d
+    - credentials:1319.v7eb_51b_3a_c97b_
+    - configuration-as-code:1775.v810dc950b_514
+    - git:5.6.0
+    - ssh-credentials:332.va_1f15c56da_1c
+    - matrix-auth:3.2.2
+    - workflow-job:1385.vb_58b_86ea_fff1
+    - timestamper:1.27
+    - ansiColor:1.0.4
+    - pipeline-stage-view:2.34
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
