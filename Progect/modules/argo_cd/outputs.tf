@@ -3,15 +3,14 @@ data "kubernetes_secret" "argocd_initial" {
     name      = "argocd-initial-admin-secret"
     namespace = var.namespace
   }
+  depends_on = [helm_release.argo]
 }
 
-# Виводимо base64-рядок як є (Terraform не намагається робити UTF-8)
-output "argocd_admin_password_b64" {
-  value     = data.kubernetes_secret.argocd_initial.data["password"]
+output "argo_initial_pass_b64" {
+  value     = try(data.kubernetes_secret.argocd_initial.data["password"], null)
   sensitive = true
 }
 
-# Підказка командою (звичайний string)
-output "argocd_admin_password_hint" {
+output "argo_initial_pass_hint" {
   value = "Decode with: kubectl -n ${var.namespace} get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 }

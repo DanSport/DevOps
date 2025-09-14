@@ -17,7 +17,7 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.region
+   region = var.aws_region
 }
 
 provider "kubernetes" {
@@ -30,7 +30,45 @@ provider "helm" {
   }
 }
 
-# --- інші твої модулі (s3-backend, vpc, ecr, eks) ---
+############################
+# Infrastructure modules
+############################
+
+# --- VPC ---
+module "vpc" {
+  source = "./modules/vpc"
+
+  vpc_cidr_block     = var.vpc_cidr_block
+  public_subnets     = var.public_subnets
+  private_subnets    = var.private_subnets
+
+  availability_zones = var.availability_zones
+
+  vpc_name           = "main-vpc"
+}
+
+# --- ECR ---
+module "ecr" {
+  source = "./modules/ecr"
+
+  # ↓ Якщо у модулі є required vars — додай їх тут.
+   ecr_name = var.ecr_name
+}
+
+# --- EKS ---
+module "eks" {
+  source = "./modules/eks"
+
+  
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+  public_subnet_ids  = module.vpc.public_subnet_ids
+
+  cluster_name    = var.eks_cluster_name
+  cluster_version = var.eks_version
+}
+
+
 
 # --- Jenkins через Helm ---
 module "jenkins" {
@@ -54,6 +92,6 @@ module "argo_cd" {
   namespace      = "argocd"
   app_repo_url   = "https://github.com/DanSport/DevOps.git"
   app_revision   = "main"
-  app_path       = "charts/django-app"   # ← виправлено
+  app_path       = "Progect/charts/django-app"  
   destination_ns = "default"
 }

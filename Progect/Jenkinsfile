@@ -17,7 +17,7 @@ pipeline {
     // GitOps
     GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'   // ← SSH, не HTTPS
     GITOPS_BRANCH     = 'main'
-    GITOPS_CHART_PATH = 'charts/django-app'                     // ← узгоджено з Argo CD
+    GITOPS_CHART_PATH = 'Progect/charts/django-app'                     
     GIT_CRED_ID       = 'gitops-ssh'
   }
 
