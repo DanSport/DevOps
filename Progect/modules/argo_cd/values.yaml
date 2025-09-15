@@ -1,3 +1,5 @@
+installCRDs: true
 server:
   service:
-    type: ClusterIP
+    type: ${server_service_type}
+    port: ${server_service_port}

@@ -1,16 +1,24 @@
-data "kubernetes_secret" "argocd_initial" {
-  metadata {
-    name      = "argocd-initial-admin-secret"
-    namespace = var.namespace
-  }
-  depends_on = [helm_release.argo]
+output "namespace" {
+  description = "Namespace, куди встановлено Argo CD"
+  value       = var.namespace
 }
 
-output "argo_initial_pass_b64" {
-  value     = try(data.kubernetes_secret.argocd_initial.data["password"], null)
-  sensitive = true
+output "argo_cd_release_name" {
+  description = "Назва релізу Argo CD"
+  value       = helm_release.argo_cd.name
 }
 
-output "argo_initial_pass_hint" {
-  value = "Decode with: kubectl -n ${var.namespace} get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+output "argo_cd_server_cluster_dns" {
+  description = "Внутрішній DNS сервісу Argo CD (ClusterIP/NodePort/LB)"
+  value       = "argo-cd.${var.namespace}.svc.cluster.local"
+}
+
+output "server_service_type" {
+  description = "Тип сервісу Argo CD server"
+  value       = var.server_service_type
+}
+
+output "admin_password_hint" {
+  description = "Команда для отримання початкового admin-пароля"
+  value       = "kubectl -n ${var.namespace} get secret argocd-initial-admin-secret -o jsonpath={.data.password} | base64 -d"
 }

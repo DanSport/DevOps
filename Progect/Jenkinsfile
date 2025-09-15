@@ -1,5 +1,5 @@
 pipeline {
-  agent { label 'default' }
+  agent { label 'default' } // використовує podTemplate з JCasC
 
   options {
     timestamps()
@@ -8,37 +8,46 @@ pipeline {
   }
 
   environment {
-    AWS_REGION = credentials('AWS_REGION')
-    ECR_URI    = credentials('ECR_URI')
+    // ECR: краще брати з Jenkins Credentials (type: Secret text) під ID 'ECR_URI'
+    // або підкласти як Global env у контролері. IRSA забезпечить авторизацію.
+    AWS_REGION = credentials('AWS_REGION')  // якщо є; інакше приберіть
+    ECR_URI    = credentials('ECR_URI')     // наприклад: 123456789012.dkr.ecr.us-east-1.amazonaws.com/django-app
 
     SAFE_BRANCH = "${env.BRANCH_NAME?.replaceAll(/[^A-Za-z0-9_.-]/, '-') ?: 'main'}"
-    IMAGE_TAG   = "${SAFE_BRANCH}-${env.BUILD_NUMBER}"
+    IMAGE_TAG   = "${SAFE_BRANCH}-${env.BUILD_NUMBER ?: '0'}"
 
-    // GitOps
-    GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'   // ← SSH, не HTTPS
+    // GitOps (SSH краще за HTTPS для приватних репо)
+    GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'
     GITOPS_BRANCH     = 'main'
-    GITOPS_CHART_PATH = 'Progect/charts/django-app'                     
+    GITOPS_CHART_PATH = 'Progect/charts/django-app'
     GIT_CRED_ID       = 'gitops-ssh'
   }
 
   stages {
     stage('Checkout source') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+        sh 'git config --global --add safe.directory "$PWD"'
+      }
     }
 
-    stage('Build & Push (kaniko → ECR)') {
+    stage('Build & Push (Kaniko → ECR)') {
       steps {
         container('kaniko') {
-          sh """
+          sh '''#!/usr/bin/env bash
+            set -euo pipefail
+
+            test -f Dockerfile || { echo "❌ Dockerfile not found"; exit 1; }
+
             /kaniko/executor \
-              --context="${workspace}" \
-              --dockerfile="${workspace}/Dockerfile" \
+              --context="$PWD" \
+              --dockerfile="$PWD/Dockerfile" \
               --destination="${ECR_URI}:${IMAGE_TAG}" \
               --destination="${ECR_URI}:latest" \
               --single-snapshot \
               --cache=true \
               --cache-ttl=48h
-          """
+          '''
         }
       }
     }
@@ -46,22 +55,40 @@ pipeline {
     stage('Clone GitOps & Bump tag') {
       steps {
         sshagent (credentials: [env.GIT_CRED_ID]) {
-          sh """
-            rm -rf gitops && mkdir gitops
-            git clone --branch ${GITOPS_BRANCH} ${GITOPS_REPO_SSH} gitops
+          sh '''#!/usr/bin/env bash
+            set -euo pipefail
 
-            test -f "gitops/${GITOPS_CHART_PATH}/values.yaml" || { echo "values.yaml not found"; exit 1; }
+            rm -rf gitops && mkdir -p gitops
+            git clone --branch "${GITOPS_BRANCH}" --depth 1 "${GITOPS_REPO_SSH}" gitops
 
-            # оновлюємо tag: <repo>:<tag> або просто <tag>, залежно від твоєї схеми
-            sed -i -E 's|^([[:space:]]*tag:[[:space:]]*).*$|\\1\"${IMAGE_TAG}\"|' "gitops/${GITOPS_CHART_PATH}/values.yaml"
+            values_file="gitops/${GITOPS_CHART_PATH}/values.yaml"
+            test -f "$values_file" || { echo "❌ $values_file not found"; exit 1; }
 
-            cd gitops
-            git config user.email "ci@local"
-            git config user.name  "jenkins-ci"
-            git add "${GITOPS_CHART_PATH}/values.yaml"
-            git commit -m "ci: bump image tag to ${IMAGE_TAG}"
-            git push origin ${GITOPS_BRANCH}
-          """
+            # якщо доступний yq — коректніше за sed
+            if command -v yq >/dev/null 2>&1; then
+              yq -i ".image.tag = \"${IMAGE_TAG}\"" "$values_file" || true
+              # fallback: часто значення зберігають як 'tag: ...'
+              yq -i "(.tag // .image.tag) = \"${IMAGE_TAG}\"" "$values_file" || true
+            else
+              # акуратний sed: міняємо 'tag:' на наш тег
+              sed -i -E 's|^([[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
+              # або якщо у тебе поле image.tag:
+              sed -i -E 's|^([[:space:]]*image:[[:space:]]*\\{?[[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
+            fi
+
+            pushd gitops
+              git config user.email "ci@local"
+              git config user.name  "jenkins-ci"
+              git add "${GITOPS_CHART_PATH}/values.yaml" || true
+
+              if ! git diff --cached --quiet; then
+                git commit -m "ci: bump image tag to ${IMAGE_TAG}"
+                git push origin "${GITOPS_BRANCH}"
+              else
+                echo "ℹ️ nothing to commit (tag unchanged)"
+              fi
+            popd
+          '''
         }
       }
     }
@@ -69,10 +96,10 @@ pipeline {
 
   post {
     success {
-      echo "✅ Pushed ${ECR_URI}:${IMAGE_TAG} and updated GitOps:${GITOPS_BRANCH}"
+      echo "✅ Pushed ${ECR_URI}:${IMAGE_TAG} and updated ${GITOPS_REPO_SSH}:${GITOPS_BRANCH}"
     }
     failure {
-      echo "❌ Pipeline failed. Check the logs above."
+      echo "❌ Pipeline failed. Check the logs."
     }
   }
 }
