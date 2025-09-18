@@ -1,26 +1,42 @@
-FROM python:3.12-alpine
 
-# Встановимо залежності, потрібні для psycopg[binary] і gunicorn мінімально
-RUN apk add --no-cache libpq
+FROM python:3.12-slim AS builder
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+# тільки для збирання коліс
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc git curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Папка застосунку
 WORKDIR /app
-
-# Спочатку лише requirements, щоб кешувався pip layer
 COPY requirements.txt .
+# збираємо .whl у /wheels (швидко, кешується)
+RUN pip wheel --wheel-dir /wheels -r requirements.txt
 
-# Встановлення без кешу pip
-ENV PIP_NO_CACHE_DIR=1
-RUN pip install --no-cache-dir -r requirements.txt
+# -------- Stage 2: runtime --------
+FROM python:3.12-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Копіюємо вихідний код (лише Django-проєкт і entrypoint)
-COPY django_app/ ./django_app/
-COPY entrypoint.sh ./
+# мінімальні системні бібліотеки для рантайму (наприклад, для psycopg)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+# інсталимо тільки готові колеса (без компіляції)
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --find-links=/wheels -r /wheels/*
+
+# важливо: скопіюй manage.py і сам пакет проєкту
+COPY django_app/core/manage.py ./                 # якщо він у корені репо
+COPY django_app/ ./django_app/    # твій код
+COPY entrypoint.sh ./             # якщо використовуєш
 RUN chmod +x /app/entrypoint.sh
 
-# Для gunicorn – порт 8000
 EXPOSE 8000
-
-# За замовчуванням – старт gunicorn (менше навантаження і стабільніше, ніж runserver)
-WORKDIR /app/django_app
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "core.wsgi:application"]
+# production-сервер — gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "django_app.core.wsgi:application"]

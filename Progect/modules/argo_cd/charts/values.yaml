@@ -1,13 +1,11 @@
 applications:
   - name: django-app
-    namespace: ${destination_ns}
     project: default
     source:
       repoURL: ${app_repo_url}
       path: ${app_path}
       targetRevision: ${app_revision}
       helm:
-        # якщо список порожній — отримаємо [] і шаблон просто нічого не підставить
         valueFiles: ${app_value_files_yaml}
     destination:
       server: https://kubernetes.default.svc
@@ -19,7 +17,6 @@ applications:
       syncOptions:
         - CreateNamespace=true
 
-# Список репозиторіїв для реєстрації в Argo CD (як Secrets)
 repositories: ${repositories_yaml}
 repoConfig:
   insecure: ${repo_insecure}

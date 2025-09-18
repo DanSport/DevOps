@@ -15,15 +15,17 @@ resource "helm_release" "argo_cd" {
   version    = var.chart_version
 
   values = [
-    file("${path.module}/values.yaml")
+    templatefile("${path.module}/values.yaml", {
+      server_service_type = var.server_service_type
+      server_service_port = var.server_service_port
+    })
   ]
 
   depends_on = [kubernetes_namespace.ns]
 }
 
-# ----- Дані для values локального шаблону (який віддаємо в argocd-apps) -----
+## ---- локальні дані для apps ----
 locals {
-  # Якщо задано приватний репозиторій — реєструємо його в Argo CD (Secret)
   repositories = var.github_repo_url == null ? [] : [
     {
       url      = var.github_repo_url
@@ -34,13 +36,11 @@ locals {
 
   repositories_yaml    = yamlencode(local.repositories)
   app_value_files_yaml = yamlencode(var.app_value_files)
-
-  # Ніяких null у шаблон — тільки bool
-  repo_insecure   = coalesce(var.repo_insecure, false)
-  repo_enable_lfs = coalesce(var.repo_enable_lfs, false)
+  repo_insecure        = coalesce(var.repo_insecure, false)
+  repo_enable_lfs      = coalesce(var.repo_enable_lfs, false)
 }
 
-# ОГОЛОШУЄМО Argo CD Applications/Repositories через офіційний чарт argocd-apps
+# ---- Argo CD Applications (через argocd-apps) ----
 resource "helm_release" "argo_apps" {
   name       = "${var.name}-apps"
   namespace  = var.namespace
@@ -50,9 +50,8 @@ resource "helm_release" "argo_apps" {
 
   values = [
     templatefile("${path.module}/charts/values.yaml", {
-      app_repo_url = var.app_repo_url
-      app_revision = var.app_revision
-      # ВАЖЛИВО: шлях від КОРЕНЯ репозиторію (у тебе це саме "charts/django-app")
+      app_repo_url         = var.app_repo_url
+      app_revision         = var.app_revision
       app_path             = var.app_path
       destination_ns       = var.destination_ns
       app_value_files_yaml = local.app_value_files_yaml
