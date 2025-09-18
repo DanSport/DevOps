@@ -1,116 +1,21 @@
 controller:
   admin:
     createSecret: true
-    username: "${admin_username}"
-    {{- if admin_password }}
-    password: "${admin_password}"
-    {{- end }}
+    username: admin
+    password: ""
 
-  serviceType: "${service_type}"
-  servicePort: ${service_port}
-  service:
-    port: ${service_port}
-    targetPort: 8080
-
-  resources:
-    requests:
-      cpu: "250m"
-      memory: "512Mi"
-    limits:
-      cpu: "500m"
-      memory: "1Gi"
+  serviceType: ClusterIP
+  servicePort: 80
 
   persistence:
-    enabled: ${persistence_enabled}
-    storageClass: "${storage_class}"
-    size: "${storage_size}"
-
-  # Використовуємо наш ServiceAccount (з IRSA)
-  rbac:
-    create: true
-  serviceAccount:
-    create: false
-    name: "${sa_name}"
-
-  # JCasC: креденшели (опц.), seed-job (опц.) і podTemplate з Kaniko
-  JCasC:
     enabled: true
-    configScripts:
-      credentials:
-        {{- if and github_username github_token }}
-        credentials:
-          system:
-            domainCredentials:
-              - credentials:
-                  - usernamePassword:
-                      scope: GLOBAL
-                      id: github-token
-                      username: "${github_username}"
-                      password: "${github_token}"
-                      description: "GitHub PAT for seed job"
-        {{- end }}
-      seed-job:
-        {{- if github_repo_url }}
-        jobs:
-          - script: >
-              job('seed-job') {
-                description('Seed job to generate pipelines')
-                scm {
-                  git {
-                    remote {
-                      url('${github_repo_url}')
-                      {{- if and github_username github_token }}
-                      credentials('github-token')
-                      {{- end }}
-                    }
-                    branches('*/main')
-                  }
-                }
-                steps {
-                  dsl {
-                    text('''pipelineJob("goit-docker-django") {
-                      definition {
-                        cpsScm {
-                          scriptPath("Jenkinsfile")
-                          scm {
-                            git {
-                              remote {
-                                url("${github_repo_url}")
-                                {{- if and github_username github_token }}
-                                credentials("github-token")
-                                {{- end }}
-                              }
-                              branches("*/main")
-                            }
-                          }
-                        }
-                      }
-                    }''')
-                  }
-                }
-              }
-        {{- end }}
-      pod-template: |
-        jenkins:
-          clouds:
-            - kubernetes:
-                name: "kubernetes"
-                serverUrl: "https://kubernetes.default.svc"
-                namespace: "{{ .Release.Namespace }}"
-                jenkinsUrl: "http://{{ include "jenkins.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:8080"
-                templates:
-                  - name: "default"
-                    label: "default"
-                    serviceAccount: "${sa_name}"
-                    containers:
-                      - name: "kaniko"
-                        image: "${kaniko_image}"
-                        command: [ "cat" ]
-                        ttyEnabled: true
-                        volumeMounts:
-                          - name: kaniko-cache
-                            mountPath: /kaniko/.cache
-                        env:
-                          # Для ECR із IRSA достатньо мати роль; REGION можна передати явним ENV за потреби
-                          {{- if ecr_repo_uri }}
-                          - name: ECR_URI
+    storageClass: gp3
+    size: 10Gi
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: false
+  name: jenkins-sa
+

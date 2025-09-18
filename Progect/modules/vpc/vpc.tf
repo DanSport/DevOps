@@ -85,56 +85,13 @@ resource "aws_nat_gateway" "nat" {
   })
 }
 
-# ---------------- Route Tables ----------------
-# Публічна: 0.0.0.0/0 -> IGW
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-
-  tags = merge(local.tags, {
-    Name = "${var.vpc_name}-rt-public"
-  })
-}
-
-# Прив'язка public RT до всіх публічних сабнетів
-resource "aws_route_table_association" "public_assoc" {
-  for_each       = aws_subnet.public
-  subnet_id      = each.value.id
-  route_table_id = aws_route_table.public.id
-}
-
-# Приватна: 0.0.0.0/0 -> NAT
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat.id
-  }
-
-  tags = merge(local.tags, {
-    Name = "${var.vpc_name}-rt-private"
-  })
-}
-
-# Прив'язка private RT до всіх приватних сабнетів
-resource "aws_route_table_association" "private_assoc" {
-  for_each       = aws_subnet.private
-  subnet_id      = each.value.id
-  route_table_id = aws_route_table.private.id
-}
-
 # ---------------- (Опційно) Gateway VPC Endpoints ----------------
 # Вони безкоштовні та скорочують трафік через NAT для S3/DynamoDB.
 
 resource "aws_vpc_endpoint" "s3" {
-  count        = try(var.enable_s3_endpoint, true) ? 1 : 0
-  vpc_id       = aws_vpc.this.id
-  service_name = "com.amazonaws.${data.aws_region.current.name}.s3"
+  count             = try(var.enable_s3_endpoint, true) ? 1 : 0
+  vpc_id            = aws_vpc.this.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
   vpc_endpoint_type = "Gateway"
   # Додаємо до приватної таблиці (трафік із приватних сабнетів піде напряму)
   route_table_ids = [aws_route_table.private.id]
@@ -145,9 +102,9 @@ resource "aws_vpc_endpoint" "s3" {
 }
 
 resource "aws_vpc_endpoint" "dynamodb" {
-  count        = try(var.enable_dynamodb_endpoint, true) ? 1 : 0
-  vpc_id       = aws_vpc.this.id
-  service_name = "com.amazonaws.${data.aws_region.current.name}.dynamodb"
+  count             = try(var.enable_dynamodb_endpoint, true) ? 1 : 0
+  vpc_id            = aws_vpc.this.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.dynamodb"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.private.id]
 

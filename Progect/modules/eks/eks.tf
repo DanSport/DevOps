@@ -25,14 +25,14 @@ module "eks" {
       subnet_ids     = var.private_subnet_ids
       instance_types = var.node_instance_types
 
-      capacity_type = var.capacity_type       # ON_DEMAND або SPOT
+      capacity_type = var.capacity_type # ON_DEMAND або SPOT
       min_size      = var.min_size
       max_size      = var.max_size
       desired_size  = var.desired_size
 
-      ami_type           = "AL2023_x86_64"    # сучасний Amazon Linux 2023
-      disk_size          = var.node_disk_size # ГБ
-      labels             = { role = "general" }
+      ami_type              = "AL2023_x86_64_STANDARD"
+      disk_size             = var.node_disk_size # ГБ
+      labels                = { role = "general" }
       create_security_group = true
     }
   }
@@ -42,18 +42,18 @@ module "eks" {
 
   # ---- Addons (оновлюються автоматично до останньої сумісної) ----
   cluster_addons = {
-    coredns   = { most_recent = true }
+    coredns    = { most_recent = true }
     kube-proxy = { most_recent = true }
-    vpc-cni   = { most_recent = true }
+    vpc-cni    = { most_recent = true }
     # EBS CSI — для dynamic PV. Якщо потрібна окрема IRSA роль — додамо пізніше.
     aws-ebs-csi-driver = { most_recent = true }
   }
 
   tags = merge(
     {
-      "Name"       = var.cluster_name
-      "ManagedBy"  = "terraform"
-      "Component"  = "eks"
+      "Name"      = var.cluster_name
+      "ManagedBy" = "terraform"
+      "Component" = "eks"
     },
     var.common_tags
   )

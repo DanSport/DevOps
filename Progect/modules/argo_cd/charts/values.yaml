@@ -21,7 +21,6 @@ applications:
 
 # Список репозиторіїв для реєстрації в Argo CD (як Secrets)
 repositories: ${repositories_yaml}
-
 repoConfig:
   insecure: ${repo_insecure}
   enableLfs: ${repo_enable_lfs}

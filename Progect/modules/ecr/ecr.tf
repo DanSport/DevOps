@@ -8,11 +8,11 @@ locals {
 
   # Дефолтна політика: дозволити push/pull лише в межах поточного акаунта
   default_repo_policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "AllowPushPullWithinAccount"
-        Effect    = "Allow"
+        Sid    = "AllowPushPullWithinAccount"
+        Effect = "Allow"
         Principal = {
           AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
         }
@@ -39,10 +39,10 @@ locals {
         rulePriority = 1
         description  = "Expire untagged images older than 14 days"
         selection = {
-          tagStatus      = "untagged"
-          countType      = "sinceImagePushed"
-          countUnit      = "days"
-          countNumber    = 14
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 14
         }
         action = { type = "expire" }
       },
@@ -50,10 +50,10 @@ locals {
         rulePriority = 2
         description  = "Keep last 20 tagged images"
         selection = {
-          tagStatus   = "tagged"
-          tagPrefixList = [ "" ] # усі теги
-          countType   = "imageCountMoreThan"
-          countNumber = 20
+          tagStatus     = "tagged"
+          tagPrefixList = [""] # усі теги
+          countType     = "imageCountMoreThan"
+          countNumber   = 20
         }
         action = { type = "expire" }
       }
@@ -83,7 +83,7 @@ resource "aws_ecr_repository_policy" "this" {
   policy     = coalesce(var.repository_policy_json, local.default_repo_policy)
 }
 
-resource "aws_ecr_lifecycle_policy" "this" {
-  repository = aws_ecr_repository.this.name
-  policy     = coalesce(var.lifecycle_policy_json, local.default_lifecycle_policy)
-}
+# resource "aws_ecr_lifecycle_policy" "this" {
+#  repository = aws_ecr_repository.this.name
+#  policy     = coalesce(var.lifecycle_policy_json, local.default_lifecycle_policy)
+# }

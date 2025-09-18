@@ -1,5 +1,5 @@
-installCRDs: true
+installCRDs: false
 server:
   service:
-    type: ${server_service_type}
-    port: ${server_service_port}
+    type: ClusterIP
+    port: 443

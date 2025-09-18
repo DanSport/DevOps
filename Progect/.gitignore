@@ -1,2 +1,49 @@
 tfplan
 tfplan
+# Local .terraform directories
+**/.terraform/*
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local variable files (sensitive)
+*.tfvars
+*.tfvars.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+.terraform
+.terraform.lock.hcl
+terraform.tfvars
+
+# Environmental Variables
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+/node_modules
+.idea/
+.vscode/
+
+/build
+/dist
+
+.notes

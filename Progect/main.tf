@@ -17,24 +17,23 @@ terraform {
   }
 }
 
-############################################
-# Providers
-############################################
-
-variable "aws_region" {
-  description = "AWS region (наприклад, us-east-1)"
-  type        = string
-}
-
+# ---------------- Providers ----------------
 provider "aws" {
   region = var.aws_region
 }
 
-############################################
-# Network / EKS prerequisites
-############################################
+# Після створення EKS будемо користуватись kubeconfig
+provider "kubernetes" {
+  config_path = pathexpand("~/.kube/config")
+}
 
-# --- VPC ---
+provider "helm" {
+  kubernetes {
+    config_path = pathexpand("~/.kube/config")
+  }
+}
+
+# ---------------- VPC ----------------
 module "vpc" {
   source = "./modules/vpc"
 
@@ -42,177 +41,88 @@ module "vpc" {
   public_subnets     = var.public_subnets
   private_subnets    = var.private_subnets
   availability_zones = var.availability_zones
-
-  vpc_name = "main-vpc"
+  vpc_name           = "main-vpc"
 }
 
-# --- ECR ---
+# ---------------- ECR ----------------
 module "ecr" {
-  source  = "./modules/ecr"
-  ecr_name = var.ecr_name
-  # Якщо ваш модуль підтримує: scan_on_push = true
+  source = "./modules/ecr"
+
+  ecr_name             = var.ecr_name
+  scan_on_push         = true
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
 }
 
-# --- EKS (використовуємо приватні сабнети для нод) ---
+# ---------------- EKS ----------------
 module "eks" {
   source = "./modules/eks"
+
+  cluster_name    = var.eks_cluster_name
+  cluster_version = var.eks_version
 
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnet_ids
   public_subnet_ids  = module.vpc.public_subnet_ids
-
-  cluster_name    = var.eks_cluster_name
-  cluster_version = var.eks_version
 }
 
-############################################
-# Підключення до кластера без kubeconfig
-############################################
-
-data "aws_eks_cluster" "this" {
-  name       = module.eks.cluster_name
-  depends_on = [module.eks]
-}
-
-data "aws_eks_cluster_auth" "this" {
-  name       = module.eks.cluster_name
-  depends_on = [module.eks]
-}
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
-}
-
-provider "helm" {
-  kubernetes {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
-  }
-}
-
-############################################
-# Platform add-ons через Helm / GitOps
-############################################
-
-module "jenkins" {
-  source = "./modules/jenkins"
-
-  namespace      = "jenkins"
-  release_name   = "jenkins"
-  chart_version  = "5.8.27"
-  service_type   = "ClusterIP" # або "LoadBalancer"
-  storage_class  = "gp3"
-  storage_size   = "10Gi"
-
-  cluster_name       = module.eks.cluster_name
-  oidc_provider_arn  = module.eks.oidc_provider_arn
-  oidc_provider_url  = module.eks.cluster_oidc_issuer_url
-  enable_irsa        = true
-
-  ecr_repo_uri    = module.ecr.repository_url
-
-  # опційно:
-  # admin_password = "changeme123"
-  # github_username = var.github_username
-  # github_token    = var.github_token
-  # github_repo_url = var.github_repo_url
-
-  providers = { aws = aws, helm = helm, kubernetes = kubernetes }
-}
-
-# --- Metrics Server (для HPA) ---
-module "metrics_server" {
-  source    = "./modules/metrics_server"
-  namespace = "kube-system"
-}
-
-# --- Argo CD + ваша GitOps-аплікація ---
+# ---------------- Argo CD ----------------
 module "argo_cd" {
   source = "./modules/argo_cd"
 
   name                = "argo-cd"
   namespace           = "argocd"
   chart_version       = "6.7.12"
-  server_service_type = "ClusterIP" # або "LoadBalancer"
+  server_service_type = "ClusterIP"
+  server_service_port = 443
 
-  app_repo_url   = var.app_repo_url
-  app_revision   = "main"
-  app_path       = "Progect/charts/django-app"
-  destination_ns = "default"
-  app_value_files = [] # напр., ["values-prod.yaml"]
+  # GitOps application
+  app_repo_url    = "https://github.com/DanSport/DevOps.git"
+  app_revision    = "main"
+  app_path        = "charts/django-app"
+  destination_ns  = "default"
+  app_value_files = []
 
-  # опційно, якщо реєструєш приватний репозиторій
+  # (опціонально) реєстрація приватного репозиторію в Argo CD
   github_username = null
   github_token    = null
   github_repo_url = null
 
-  providers = { helm = helm, kubernetes = kubernetes }
+  # Після створення кластера (щоб kubeconfig вже був оновлений)
+  depends_on = [module.eks]
 }
 
+# ---------------- Jenkins ----------------
+module "jenkins" {
+  source = "./modules/jenkins"
 
-############################################
-# Variables (оголошення очікуваних змінних)
-############################################
+  namespace     = "jenkins"
+  release_name  = "jenkins"
+  chart_version = "5.8.27"
 
-variable "vpc_cidr_block" {
-  description = "CIDR для VPC"
-  type        = string
-}
+  service_type = "ClusterIP" # або "LoadBalancer"
+  service_port = 80
 
-variable "public_subnets" {
-  description = "Список публічних підмереж"
-  type        = list(string)
-}
+  persistence_enabled = true
+  storage_class       = "gp3"
+  storage_size        = "10Gi"
 
-variable "private_subnets" {
-  description = "Список приватних підмереж"
-  type        = list(string)
-}
+  admin_username = "admin"
+  # admin_password = null  # дозволь чарту згенерувати секрет
 
-variable "availability_zones" {
-  description = "Список AZ (наприклад, [\"us-east-1a\",\"us-east-1b\",\"us-east-1c\"])"
-  type        = list(string)
-}
+  # IRSA/OIDC з EKS модуля
+  cluster_name      = module.eks.cluster_name
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.cluster_oidc_issuer_url
+  enable_irsa       = true
 
-variable "ecr_name" {
-  description = "Назва ECR репозиторію"
-  type        = string
-}
+  # Підказка для Kaniko/Jenkins (URI ECR)
+  ecr_repo_uri = module.ecr.repository_url
 
-variable "eks_cluster_name" {
-  description = "Назва кластера EKS"
-  type        = string
-}
+  # (опційно) seed job креденшели
+  github_username = null
+  github_token    = null
+  github_repo_url = null
 
-variable "eks_version" {
-  description = "Версія Kubernetes для EKS (наприклад, \"1.29\")"
-  type        = string
-}
-
-variable "app_repo_url" {
-  description = "Git URL репозиторію з маніфестами/чартами для Argo CD"
-  type        = string
-}
-
-############################################
-# (Необов'язково) базові outputs
-############################################
-
-output "region" {
-  value = var.aws_region
-}
-
-output "vpc_id" {
-  value = module.vpc.vpc_id
-}
-
-output "eks_cluster_name" {
-  value = module.eks.cluster_name
-}
-
-output "ecr_repository_url" {
-  value = module.ecr.repository_url
+  depends_on = [module.eks, module.ecr]
 }

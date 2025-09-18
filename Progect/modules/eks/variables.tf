@@ -1,9 +1,9 @@
 # Обов’язкові
-variable "cluster_name"        { type = string }
-variable "cluster_version"     { type = string } # напр. "1.29"
-variable "vpc_id"              { type = string }
-variable "private_subnet_ids"  { type = list(string) }
-variable "public_subnet_ids"   { type = list(string) }
+variable "cluster_name" { type = string }
+variable "cluster_version" { type = string } # напр. "1.29"
+variable "vpc_id" { type = string }
+variable "private_subnet_ids" { type = list(string) }
+variable "public_subnet_ids" { type = list(string) }
 
 # Доступ до API (private endpoint корисний у VPC з VPN/DirectConnect)
 variable "enable_private_endpoint" {
@@ -39,9 +39,20 @@ variable "capacity_type" {
   default     = "ON_DEMAND"
 }
 
-variable "desired_size" { type = number, default = 2 }
-variable "min_size"     { type = number, default = 2 }
-variable "max_size"     { type = number, default = 6 }
+variable "desired_size" {
+  type    = number
+  default = 2
+}
+
+variable "min_size" {
+  type    = number
+  default = 2
+}
+
+variable "max_size" {
+  type    = number
+  default = 6
+}
 
 variable "node_disk_size" {
   description = "Розмір диска для нод (ГБ)"

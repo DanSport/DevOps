@@ -20,32 +20,32 @@ variable "tf_lock_table_name" {
 
 # VPC
 variable "vpc_cidr_block" {
-  type        = string
-  default     = "10.0.0.0/16"
+  type    = string
+  default = "10.0.0.0/16"
 }
 variable "public_subnets" {
-  type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  type    = list(string)
+  default = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
 }
 variable "private_subnets" {
-  type        = list(string)
-  default     = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
+  type    = list(string)
+  default = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
 }
 variable "availability_zones" {
-  type        = list(string)
-  default     = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  type    = list(string)
+  default = ["us-east-1a", "us-east-1b", "us-east-1c"]
 }
 
 # ECR
 variable "ecr_name" {
-  type        = string
-  default     = "lesson-7-ecr"
+  type    = string
+  default = "lesson-7-ecr"
 }
 
 # EKS
 variable "eks_cluster_name" {
-  type        = string
-  default     = "lesson-7-eks"
+  type    = string
+  default = "lesson-7-eks"
 }
 variable "eks_version" {
   type        = string
@@ -55,16 +55,16 @@ variable "eks_version" {
 
 # Jenkins / GitOps (за потреби)
 variable "github_username" {
-  type        = string
-  sensitive   = true
-  default     = null
+  type      = string
+  sensitive = true
+  default   = null
 }
 variable "github_token" {
-  type        = string
-  sensitive   = true
-  default     = null
+  type      = string
+  sensitive = true
+  default   = null
 }
 variable "github_repo_url" {
-  type        = string
-  default     = null
+  type    = string
+  default = null
 }
