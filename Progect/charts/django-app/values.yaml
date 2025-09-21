@@ -1,0 +1,41 @@
+image:
+  repository: 785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr
+  tag: "v1-mini"
+
+replicaCount: 2
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8000
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+env: # буде в ConfigMap
+  DJANGO_DEBUG: "1"
+  DJANGO_ALLOWED_HOSTS: "*"
+  POSTGRES_DB: "appdb"
+  POSTGRES_USER: "appuser"
+  POSTGRES_PASSWORD: "apppass"
+  POSTGRES_HOST: "db"     # за потреби змінити
+  POSTGRES_PORT: "5432"
+
+health:
+  path: /admin/login/
+  readinessInitialDelay: 5
+  readinessPeriod: 5
+  livenessInitialDelay: 20
+  livenessPeriod: 10
+
