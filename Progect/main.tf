@@ -22,14 +22,62 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Після створення EKS будемо користуватись kubeconfig
+# ВАЖЛИВО: використовуємо виходи твого EKS-модуля (wrapper) — в ньому вже є:
+# - module.eks.cluster_name
+# - module.eks.cluster_endpoint
+# - module.eks.certificate_authority_data
+# (див. Progect/modules/eks/outputs.tf у твоєму дампі) :contentReference[oaicite:0]{index=0}
+
+# ---- Kubernetes providers: DEFAULT і ALIAS=eks (дзеркальні) ----
 provider "kubernetes" {
-  config_path = pathexpand("~/.kube/config")
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.certificate_authority_data)
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+  }
+}
+
+provider "kubernetes" {
+  alias                  = "eks"
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.certificate_authority_data)
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+  }
+}
+
+# ---- Helm providers: DEFAULT і ALIAS=eks (дзеркальні) ----
+provider "helm" {
+  kubernetes {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.certificate_authority_data)
+
+    exec {
+      api_version = "client.authentication.k8s.io/v1"
+      command     = "aws"
+      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+    }
+  }
 }
 
 provider "helm" {
+  alias = "eks"
+
   kubernetes {
-    config_path = pathexpand("~/.kube/config")
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.certificate_authority_data)
+
+    exec {
+      api_version = "client.authentication.k8s.io/v1"
+      command     = "aws"
+      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+    }
   }
 }
 
@@ -79,16 +127,22 @@ module "argo_cd" {
   # GitOps application
   app_repo_url    = "https://github.com/DanSport/DevOps.git"
   app_revision    = "main"
-  app_path = "Progect/charts/django-app"
+  app_path        = "Progect/charts/django-app"
   destination_ns  = "default"
   app_value_files = []
 
-  # (опціонально) реєстрація приватного репозиторію в Argo CD
+  # (опційно) приватний репозиторій у Argo CD
   github_username = null
   github_token    = null
   github_repo_url = null
 
-  # Після створення кластера (щоб kubeconfig вже був оновлений)
+  # ЯВНО пробросимо alias-провайдери у модуль
+  providers = {
+    kubernetes = kubernetes.eks
+    helm       = helm.eks
+  }
+
+  # Щоб helm/k8s пішли тільки після створення кластера
   depends_on = [module.eks]
 }
 
@@ -100,7 +154,7 @@ module "jenkins" {
   release_name  = "jenkins"
   chart_version = "5.8.27"
 
-  service_type = "ClusterIP" # або "LoadBalancer"
+  service_type = "ClusterIP"
   service_port = 80
 
   persistence_enabled = true
@@ -108,21 +162,25 @@ module "jenkins" {
   storage_size        = "10Gi"
 
   admin_username = "admin"
-  # admin_password = null  # дозволь чарту згенерувати секрет
 
-  # IRSA/OIDC з EKS модуля
+  # IRSA/OIDC із EKS
   cluster_name      = module.eks.cluster_name
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_provider_url = module.eks.cluster_oidc_issuer_url
   enable_irsa       = true
 
-  # Підказка для Kaniko/Jenkins (URI ECR)
+  # ECR для Kaniko/Jenkins
   ecr_repo_uri = module.ecr.repository_url
 
-  # (опційно) seed job креденшели
   github_username = null
   github_token    = null
   github_repo_url = null
+
+  providers = {
+    kubernetes = kubernetes.eks
+    helm       = helm.eks
+    aws        = aws
+  }
 
   depends_on = [module.eks, module.ecr]
 }

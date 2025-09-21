@@ -7,11 +7,11 @@ locals {
     var.common_tags
   )
 
-  # --- Умовні шматки JCasC (вставляємо лише коли треба) ---
+  # --- Умовні шматки JCasC (креденшели для seed-job) ---
   jcas_credentials = (
     var.github_username != null && var.github_username != "" &&
     var.github_token != null && var.github_token != ""
-    ) ? {
+  ) ? {
     credentials = <<YAML
       credentials:
         system:
@@ -26,9 +26,10 @@ locals {
     YAML
   } : {}
 
+  # --- Seed job (опційно) ---
   jcas_seed_job = (
     var.github_repo_url != null && var.github_repo_url != ""
-    ) ? {
+  ) ? {
     seed-job = <<YAML
       jobs:
         - script: >
@@ -39,9 +40,9 @@ locals {
                   remote {
                     url('${var.github_repo_url}')
                     ${(
-    var.github_username != null && var.github_username != "" &&
-    var.github_token != null && var.github_token != ""
-    ) ? "credentials('github-token')" : ""}
+                      var.github_username != null && var.github_username != "" &&
+                      var.github_token != null && var.github_token != ""
+                    ) ? "credentials('github-token')" : ""}
                   }
                   branches('*/main')
                 }
@@ -57,9 +58,9 @@ locals {
                             remote {
                               url("${var.github_repo_url}")
                               ${(
-    var.github_username != null && var.github_username != "" &&
-    var.github_token != null && var.github_token != ""
-) ? "credentials('github-token')" : ""}
+                                var.github_username != null && var.github_username != "" &&
+                                var.github_token != null && var.github_token != ""
+                              ) ? "credentials('github-token')" : ""}
                             }
                             branches("*/main")
                           }
@@ -71,10 +72,11 @@ locals {
               }
             }
     YAML
-} : {}
+  } : {}
 
-jcas_pod_template = {
-  pod-template = <<YAML
+  # --- Pod template для Kubernetes plugin (JCasC синтаксис плагіна, не PodSpec!) ---
+  jcas_pod_template = {
+    pod-template = <<YAML
       jenkins:
         clouds:
           - kubernetes:
@@ -89,37 +91,51 @@ jcas_pod_template = {
                   containers:
                     - name: "kaniko"
                       image: "${var.kaniko_image}"
-                      command: ["cat"]
+                      command: "cat"
                       ttyEnabled: true
-                      volumeMounts:
-                        - name: kaniko-cache
-                          mountPath: /kaniko/.cache
-                      env:
-                        ${(
-  var.ecr_repo_uri != null && var.ecr_repo_uri != ""
-) ? "- name: ECR_URI\n                          value: \"${var.ecr_repo_uri}\"" : ""}
+                      ${(
+                        var.ecr_repo_uri != null && var.ecr_repo_uri != ""
+                      ) ? "envVars:\n                        - envVar:\n                            key: ECR_URI\n                            value: \"${var.ecr_repo_uri}\"" : ""}
+                  # ВАЖЛИВО: volumes у форматі Kubernetes plugin
                   volumes:
-                    - name: kaniko-cache
-                      emptyDir: {}
+                    - emptyDirVolume:
+                        mountPath: "/kaniko/.cache"
+                        memory: false
     YAML
-}
+  }
 
-# Фінальний об’єднаний набір JCasC-скриптів
-jcas_configscripts = merge(local.jcas_pod_template, local.jcas_credentials, local.jcas_seed_job)
-
-# Список плагінів, які підкладаємо в Helm
-install_plugins = var.extra_plugins
+  # Фінальний набір JCasC
+  jcas_configscripts = merge(local.jcas_pod_template, local.jcas_credentials, local.jcas_seed_job)
 }
 
 # -----------------------------
-# Namespace під Jenkins
+# Namespace
 # -----------------------------
 resource "kubernetes_namespace" "ns" {
-  metadata { name = var.namespace }
+  metadata {
+    name = var.namespace
+  }
 }
+resource "kubernetes_storage_class_v1" "gp3" {
+  metadata {
+    name = "gp3"
+    # якщо хочеш одразу зробити дефолтним — розкоментуй анотацію нижче
+    # annotations = {
+    #   "storageclass.kubernetes.io/is-default-class" = "true"
+    # }
+  }
 
+  storage_provisioner = "ebs.csi.aws.com"
+  reclaim_policy      = "Delete"
+  volume_binding_mode = "WaitForFirstConsumer"
+
+  parameters = {
+    type = "gp3"
+    # за бажанням: fsType = "ext4", encrypted = "true", iops = "3000", throughput = "125"
+  }
+}
 # -----------------------------
-# IRSA: Роль для Jenkins SA (Kaniko) з доступом до ECR (опційно)
+# IRSA для Jenkins (Kaniko → ECR)
 # -----------------------------
 resource "aws_iam_role" "jenkins_irsa_role" {
   count = var.enable_irsa ? 1 : 0
@@ -168,7 +184,7 @@ resource "aws_iam_role_policy" "jenkins_ecr_policy" {
 }
 
 # -----------------------------
-# ServiceAccount для Jenkins (з IRSA-анотацією, якщо ввімкнено)
+# ServiceAccount (IRSA annotation)
 # -----------------------------
 resource "kubernetes_service_account" "sa" {
   metadata {
@@ -181,11 +197,7 @@ resource "kubernetes_service_account" "sa" {
   depends_on = [kubernetes_namespace.ns]
 }
 
-# -----------------------------
-# Helm Release Jenkins
-#   - 1-й values: статичний файл values.yaml (дефолти без шаблонів)
-#   - 2-й values: динамічні налаштування та JCasC через yamlencode
-# -----------------------------
+
 resource "helm_release" "jenkins" {
   name       = var.release_name
   namespace  = var.namespace
@@ -194,13 +206,15 @@ resource "helm_release" "jenkins" {
   version    = var.chart_version
 
   create_namespace = false
-  wait             = true
-  timeout          = 1200
-
+  wait             = false
+  timeout          = 600
+  max_history      = 3
 
   values = [
+    # базові дефолти з файлу (без installPlugins/JCasC/persistence!)
     file("${path.module}/values.yaml"),
 
+    # динаміка — все важливе тут
     yamlencode({
       controller = {
         admin = {
@@ -209,34 +223,84 @@ resource "helm_release" "jenkins" {
             var.admin_password != null && var.admin_password != ""
           ) ? var.admin_password : ""
         }
+
         serviceType = var.service_type
         servicePort = var.service_port
+
+        # PVC одразу на gp3 з потрібним розміром
         persistence = {
           enabled      = var.persistence_enabled
-          storageClass = var.storage_class
-          size         = var.storage_size
+          storageClass = "gp3"
+          size         = coalesce(var.storage_size, "10Gi")
         }
+
+        # JCasC
         JCasC = {
           enabled       = true
           configScripts = local.jcas_configscripts
         }
+
+        # Мінімальний набір плагінів БЕЗ фіксації версій (щоб уникнути конфліктів)
+        installPlugins = [
+          "kubernetes",
+          "workflow-aggregator",
+          "git",
+          "configuration-as-code",
+          "credentials-binding"
+        ]
       }
 
-      # робимо явним, щоб чарт не створював свій SA
+      # Використовуємо наш SA, щоб не створювати той, що в чарті
       serviceAccount = {
         create = false
         name   = kubernetes_service_account.sa.metadata[0].name
       }
-
-      # Список плагінів
-      installPlugins = local.install_plugins
+      
     })
   ]
 
   depends_on = [
     kubernetes_service_account.sa
-    # aws_iam_role_policy.jenkins_ecr_policy  # НЕ додаємо індекс тут, щоб не ламалось при enable_irsa=false
   ]
+}
+
+# -----------------------------
+# RBAC на читання конфігів (щоб sidecar не падав)
+# -----------------------------
+resource "kubernetes_role" "jenkins_config_reader" {
+  metadata {
+    name      = "jenkins-config-reader"
+    namespace = var.namespace
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["configmaps", "secrets"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  depends_on = [helm_release.jenkins]
+}
+
+resource "kubernetes_role_binding" "jenkins_config_reader_binding" {
+  metadata {
+    name      = "jenkins-config-reader-binding"
+    namespace = var.namespace
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.jenkins_config_reader.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.sa.metadata[0].name
+    namespace = var.namespace
+  }
+
+  depends_on = [kubernetes_role.jenkins_config_reader]
 }
 
 # -----------------------------

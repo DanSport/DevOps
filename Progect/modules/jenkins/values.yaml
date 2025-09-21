@@ -19,3 +19,7 @@ serviceAccount:
   create: false
   name: jenkins-sa
 
+persistence:
+  enabled: true
+  storageClass: gp3
+  size: 10Gi
