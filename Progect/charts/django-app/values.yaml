@@ -1,6 +1,7 @@
 image:
   repository: 785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr
   tag: v1-mini
+  pullPolicy: Always # або IfNotPresent у прод
 
 replicaCount: 2
 

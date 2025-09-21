@@ -18,11 +18,14 @@ spec:
       initContainers:
         - name: wait-for-db
           image: postgres:15
-          command: ['sh','-c','until pg_isready -h db -p 5432 -t 2; do echo "waiting for db"; sleep 2; done']
+          command: ['sh','-c','until pg_isready -h {{ .Values.env.POSTGRES_HOST | default "db" }} -p {{ .Values.env.POSTGRES_PORT | default "5432" }} -t 2; do echo "waiting for db"; sleep 2; done']
+
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           workingDir: /app/django_app
-          command: ["sh","-lc","python core/manage.py migrate --noinput"]
+          # Ключова зміна: викликаємо venv-пайтон без шеллу
+          command: ["/venv/bin/python"]
+          args: ["manage.py","migrate","--noinput"]
           envFrom:
             - configMapRef:
                 name: {{ include "django-app.fullname" . }}-config
@@ -32,14 +35,23 @@ spec:
                 secretKeyRef:
                   name: django-db-secret
                   key: POSTGRES_PASSWORD
+
       containers:
         - name: {{ include "django-app.name" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
           workingDir: /app/django_app
           ports:
             - containerPort: 8000
-          command: ["python","core/manage.py","runserver","0.0.0.0:8000"]
+
+          # Рекомендовано для прод:
+          # command: ["gunicorn"]
+          # args: ["--bind","0.0.0.0:8000","core.wsgi:application"]
+
+          # Якщо хочеш залишити runserver під дев:
+          command: ["/venv/bin/python"]
+          args: ["manage.py","runserver","0.0.0.0:8000"]
+
           envFrom:
             - configMapRef:
                 name: {{ include "django-app.fullname" . }}-config
@@ -49,6 +61,7 @@ spec:
                 secretKeyRef:
                   name: django-db-secret
                   key: POSTGRES_PASSWORD
+
           readinessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
@@ -62,6 +75,6 @@ spec:
               port: 8000
             initialDelaySeconds: {{ .Values.health.livenessInitialDelay | default 20 }}
             periodSeconds: {{ .Values.health.livenessPeriod | default 10 }}
+
           resources:
             {{- toYaml (.Values.resources | default dict) | nindent 12 }}
-
