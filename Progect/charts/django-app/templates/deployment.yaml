@@ -16,26 +16,40 @@ spec:
         {{- include "django-app.labels" . | nindent 8 }}
     spec:
       initContainers:
-        - name: wait-for-db
-          image: postgres:15
-          command: ['sh','-c','until pg_isready -h db -p 5432 -t 2; do echo "waiting for db"; sleep 2; done']
-        - name: migrate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          workingDir: /app/django_app
-          command: ["sh","-lc","python manage.py migrate --noinput"]
-          envFrom:
-            - configMapRef:
-                name: {{ include "django-app.fullname" . }}-config
-          env:
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: django-db-secret
-                  key: POSTGRES_PASSWORD
+      - name: wait-for-db
+        image: postgres:15
+        imagePullPolicy: IfNotPresent
+        envFrom:
+          - configMapRef:
+             name: {{ .Release.Name }}-django-app-config
+        command:
+           - /bin/sh
+           - -lc
+           - |
+             until pg_isready -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-appuser}"; do
+             echo "waiting for db"
+             sleep 2
+             done
+
+      - name: migrate
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
+        workingDir: /app/django_app
+        envFrom:
+          - configMapRef:
+            name: {{ .Release.Name }}-django-app-config
+        env:
+          - name: DB_PASSWORD
+            valueFrom:
+            secretKeyRef:
+            name: django-db-secret
+            key: POSTGRES_PASSWORD
+    # 👇 Викликаємо саме venv-інтерпретатор
+        command: ["/venv/bin/python","manage.py","migrate","--noinput"]
       containers:
         - name: {{ include "django-app.name" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
           workingDir: /app/django_app
           ports:
             - containerPort: 8000

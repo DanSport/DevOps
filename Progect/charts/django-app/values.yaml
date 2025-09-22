@@ -1,6 +1,7 @@
 image:
   repository: 785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr
   tag: "v3-app"
+  pullPolicy: Always
 
 replicaCount: 2
 
@@ -31,6 +32,7 @@ env: # буде в ConfigMap
   POSTGRES_PASSWORD: "apppass"
   POSTGRES_HOST: "db"     # за потреби змінити
   POSTGRES_PORT: "5432"
+  DJANGO_STATIC_ROOT: "/var/www/static"
 
 health:
   path: /admin/login/
