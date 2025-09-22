@@ -1,5 +1,30 @@
 pipeline {
-  agent { label 'default' } // використовує podTemplate з JCasC
+  agent {
+    kubernetes {
+      label 'default'                 // один і той же label, що в Pod Template
+      defaultContainer 'jnlp'
+      yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins/role: agent
+spec:
+  serviceAccountName: jenkins
+  restartPolicy: Never
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:3301.v4363ddcca_4e7-1
+    args: ['\$(computer.jnlpmac)', '\$(computer.name)']
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:v1.23.2
+    imagePullPolicy: Always
+    command: ['sleep']
+    args: ['infinity']
+    workingDir: /workspace
+"""
+    }
+  }
 
   options {
     timestamps()
@@ -8,17 +33,15 @@ pipeline {
   }
 
   environment {
-    // ECR: краще брати з Jenkins Credentials (type: Secret text) під ID 'ECR_URI'
-    // або підкласти як Global env у контролері. IRSA забезпечить авторизацію.
-    AWS_REGION = credentials('AWS_REGION')  // якщо є; інакше приберіть
-    ECR_URI    = credentials('ECR_URI')     // наприклад: 123456789012.dkr.ecr.us-east-1.amazonaws.com/django-app
+    // Щоб не залежати від Jenkins Credentials — підставимо явні значення
+    AWS_REGION = 'us-east-1'
+    ECR_URI    = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
 
     SAFE_BRANCH = "${env.BRANCH_NAME?.replaceAll(/[^A-Za-z0-9_.-]/, '-') ?: 'main'}"
     IMAGE_TAG   = "${SAFE_BRANCH}-${env.BUILD_NUMBER ?: '0'}"
 
-    // GitOps (SSH краще за HTTPS для приватних репо)
     GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'
-    GITOPS_BRANCH     = 'main'
+    GITOPS_BRANCH     = 'main'                 // змінюй на 'lesson-8-9' якщо треба
     GITOPS_CHART_PATH = 'Progect/charts/django-app'
     GIT_CRED_ID       = 'gitops-ssh'
   }
@@ -64,15 +87,11 @@ pipeline {
             values_file="gitops/${GITOPS_CHART_PATH}/values.yaml"
             test -f "$values_file" || { echo "❌ $values_file not found"; exit 1; }
 
-            # якщо доступний yq — коректніше за sed
             if command -v yq >/dev/null 2>&1; then
-              yq -i ".image.tag = \"${IMAGE_TAG}\"" "$values_file" || true
-              # fallback: часто значення зберігають як 'tag: ...'
-              yq -i "(.tag // .image.tag) = \"${IMAGE_TAG}\"" "$values_file" || true
+              yq -i ".image.tag = \\"${IMAGE_TAG}\\"" "$values_file" || true
+              yq -i "(.tag // .image.tag) = \\"${IMAGE_TAG}\\"" "$values_file" || true
             else
-              # акуратний sed: міняємо 'tag:' на наш тег
               sed -i -E 's|^([[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
-              # або якщо у тебе поле image.tag:
               sed -i -E 's|^([[:space:]]*image:[[:space:]]*\\{?[[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
             fi
 
