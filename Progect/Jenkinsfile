@@ -1,7 +1,8 @@
 pipeline {
+  // Агент у Kubernetes (без залежності від UI-шаблонів)
   agent {
     kubernetes {
-      label 'default'                 // один і той же label, що в Pod Template
+      label 'default'
       defaultContainer 'jnlp'
       yaml """
 apiVersion: v1
@@ -10,18 +11,27 @@ metadata:
   labels:
     jenkins/role: agent
 spec:
-  serviceAccountName: jenkins
+  serviceAccountName: jenkins-sa
   restartPolicy: Never
   containers:
   - name: jnlp
     image: jenkins/inbound-agent:3301.v4363ddcca_4e7-1
-    args: ['\$(computer.jnlpmac)', '\$(computer.name)']
+    args:
+    - \\$(computer.jnlpmac)
+    - \\$(computer.name)
   - name: kaniko
-    image: gcr.io/kaniko-project/executor:v1.23.2
+    image: gcr.io/kaniko-project/executor:v1.23.2-debug
     imagePullPolicy: Always
-    command: ['sleep']
-    args: ['infinity']
+    command: ["/busybox/sh"]
+    args: ["-c","sleep infinity"]
+    tty: true
     workingDir: /workspace
+    volumeMounts:
+    - name: kaniko-cache
+      mountPath: /kaniko/.cache
+  volumes:
+  - name: kaniko-cache
+    emptyDir: {}
 """
     }
   }
@@ -33,20 +43,23 @@ spec:
   }
 
   environment {
-    // Щоб не залежати від Jenkins Credentials — підставимо явні значення
+    // === ЗМІНИ ПІД СЕБЕ, якщо треба ===
     AWS_REGION = 'us-east-1'
+    // з Terraform output:
     ECR_URI    = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
+
+    // гілка GitOps (залишив main; якщо у тебе lesson-8-9 — просто заміни)
+    GITOPS_BRANCH     = 'main'
+    GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'
+    GITOPS_CHART_PATH = 'Progect/charts/django-app'
+    GIT_CRED_ID       = 'gitops-ssh'
 
     SAFE_BRANCH = "${env.BRANCH_NAME?.replaceAll(/[^A-Za-z0-9_.-]/, '-') ?: 'main'}"
     IMAGE_TAG   = "${SAFE_BRANCH}-${env.BUILD_NUMBER ?: '0'}"
-
-    GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'
-    GITOPS_BRANCH     = 'main'                 // змінюй на 'lesson-8-9' якщо треба
-    GITOPS_CHART_PATH = 'Progect/charts/django-app'
-    GIT_CRED_ID       = 'gitops-ssh'
   }
 
   stages {
+
     stage('Checkout source') {
       steps {
         checkout scm
@@ -62,6 +75,9 @@ spec:
 
             test -f Dockerfile || { echo "❌ Dockerfile not found"; exit 1; }
 
+            # Kaniko автоматично використовує креденшли з IRSA/ServiceAccount.
+            # Якщо IRSA не налаштовано, пуш у ECR впаде з AccessDenied.
+
             /kaniko/executor \
               --context="$PWD" \
               --dockerfile="$PWD/Dockerfile" \
@@ -75,7 +91,7 @@ spec:
       }
     }
 
-    stage('Clone GitOps & Bump tag') {
+    stage('Clone GitOps & bump tag') {
       steps {
         sshagent (credentials: [env.GIT_CRED_ID]) {
           sh '''#!/usr/bin/env bash
@@ -87,11 +103,14 @@ spec:
             values_file="gitops/${GITOPS_CHART_PATH}/values.yaml"
             test -f "$values_file" || { echo "❌ $values_file not found"; exit 1; }
 
+            # якщо yq відсутній — застосуємо безпечний sed
             if command -v yq >/dev/null 2>&1; then
               yq -i ".image.tag = \\"${IMAGE_TAG}\\"" "$values_file" || true
               yq -i "(.tag // .image.tag) = \\"${IMAGE_TAG}\\"" "$values_file" || true
             else
+              # 'tag: ...'
               sed -i -E 's|^([[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
+              # або 'image: { tag: ... }'
               sed -i -E 's|^([[:space:]]*image:[[:space:]]*\\{?[[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
             fi
 

@@ -11,7 +11,9 @@ controller:
     enabled: true
     storageClass: gp3
     size: 10Gi
-
+  installPlugins:
+    - ansicolor:1.0.4
+    - timestamper:1.26
 rbac:
   create: true
 

@@ -271,3 +271,5 @@ terraform destroy -auto-approve
 - **Ingress** (ALB/Nginx) для Jenkins/Argo CD.
 - Окремі **IRSA-ролі** для аддонів (EBS CSI із власним policy).
 - Замість `tag` фіксувати `image.digest` у GitOps (детерміновані деплоя).
+
+![alt text](image.png)

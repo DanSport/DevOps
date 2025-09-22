@@ -1,14 +1,16 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "django-app.fullname" . }}
+  name: {{ .Release.Name }}-django-app-svc
   labels:
-    {{- include "django-app.labels" . | nindent 4 }}
+    app: django-app
+    release: {{ .Release.Name }}
 spec:
-  type: LoadBalancer
+  type: {{ .Values.service.type | default "LoadBalancer" }}
   selector:
-    app: {{ include "django-app.name" . }}
+    app: django-app
+    release: {{ .Release.Name }}
   ports:
     - name: http
-      port: 80
-      targetPort: 8000
+      port: {{ .Values.service.port | default 80 }}
+      targetPort: {{ .Values.service.targetPort | default 8000 }}

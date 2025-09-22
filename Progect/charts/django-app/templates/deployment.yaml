@@ -1,80 +1,60 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "django-app.fullname" . }}
+  name: {{ .Release.Name }}-django-app
   labels:
-    {{- include "django-app.labels" . | nindent 4 }}
+    app: django-app
+    release: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.replicaCount | default 2 }}
   selector:
     matchLabels:
-      app: {{ include "django-app.name" . }}
+      app: django-app
+      release: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app: {{ include "django-app.name" . }}
-        {{- include "django-app.labels" . | nindent 8 }}
+        app: django-app
+        release: {{ .Release.Name }}
     spec:
       initContainers:
         - name: wait-for-db
           image: postgres:15
-          command: ['sh','-c','until pg_isready -h {{ .Values.env.POSTGRES_HOST | default "db" }} -p {{ .Values.env.POSTGRES_PORT | default "5432" }} -t 2; do echo "waiting for db"; sleep 2; done']
-
+          command:
+            - sh
+            - -c
+            - >
+              until pg_isready -h {{ .Values.env.POSTGRES_HOST }} -p {{ .Values.env.POSTGRES_PORT }} -t 2;
+              do echo "waiting for db"; sleep 2; done
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           workingDir: /app/django_app
-          # Ключова зміна: викликаємо venv-пайтон без шеллу
-          command: ["/venv/bin/python"]
-          args: ["manage.py","migrate","--noinput"]
+          command: ["sh","-lc","python manage.py migrate --noinput"]
           envFrom:
             - configMapRef:
-                name: {{ include "django-app.fullname" . }}-config
-          env:
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: django-db-secret
-                  key: POSTGRES_PASSWORD
-
+                name: {{ .Release.Name }}-django-app-config
       containers:
-        - name: {{ include "django-app.name" . }}
+        - name: django-app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
           workingDir: /app/django_app
+          command: ["/venv/bin/gunicorn","--bind","0.0.0.0:8000","core.wsgi:application"]
           ports:
             - containerPort: 8000
-
-          # Рекомендовано для прод:
-          # command: ["gunicorn"]
-          # args: ["--bind","0.0.0.0:8000","core.wsgi:application"]
-
-          # Якщо хочеш залишити runserver під дев:
-          command: ["/venv/bin/python"]
-          args: ["manage.py","runserver","0.0.0.0:8000"]
-
           envFrom:
             - configMapRef:
-                name: {{ include "django-app.fullname" . }}-config
-          env:
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: django-db-secret
-                  key: POSTGRES_PASSWORD
-
+                name: {{ .Release.Name }}-django-app-config
           readinessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
               port: 8000
             initialDelaySeconds: {{ .Values.health.readinessInitialDelay | default 5 }}
             periodSeconds: {{ .Values.health.readinessPeriod | default 5 }}
-
           livenessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
               port: 8000
             initialDelaySeconds: {{ .Values.health.livenessInitialDelay | default 20 }}
             periodSeconds: {{ .Values.health.livenessPeriod | default 10 }}
-
           resources:
             {{- toYaml (.Values.resources | default dict) | nindent 12 }}

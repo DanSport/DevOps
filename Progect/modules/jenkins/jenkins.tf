@@ -83,7 +83,7 @@ locals {
               name: "kubernetes"
               serverUrl: "https://kubernetes.default.svc"
               namespace: "${var.namespace}"
-              jenkinsUrl: "http://jenkins.${var.namespace}.svc.cluster.local:8080"
+              jenkinsUrl: "http://jenkins.${var.namespace}.svc.cluster.local:${var.service_port}"
               templates:
                 - name: "default"
                   label: "default"

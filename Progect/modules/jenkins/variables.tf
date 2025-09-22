@@ -13,7 +13,7 @@ variable "release_name" {
 variable "chart_version" {
   description = "Версія чарта Jenkins"
   type        = string
-  default     = "5.8.27"
+  default     = "5.8.91"
 }
 
 variable "service_type" {

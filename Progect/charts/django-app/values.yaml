@@ -1,7 +1,7 @@
 image:
   repository: 785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr
   tag: v1-mini
-  pullPolicy: Always # або IfNotPresent у прод
+  pullPolicy: Always
 
 replicaCount: 2
 
@@ -24,14 +24,22 @@ autoscaling:
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
 
-env: # буде в ConfigMap
-  DJANGO_DEBUG: "1"
-  DJANGO_ALLOWED_HOSTS: "*"
-  POSTGRES_DB: "appdb"
-  POSTGRES_USER: "appuser"
-  POSTGRES_PASSWORD: "apppass"
-  POSTGRES_HOST: "db"     # за потреби змінити
+config:
+  env:
+    DJANGO_STATIC_ROOT: "/var/www/static"
+env:
+  POSTGRES_DB: appdb
+  POSTGRES_USER: appuser
+  POSTGRES_PASSWORD: apppass                # у проді винести в Secret
+  POSTGRES_HOST: postgres.default.svc.cluster.local
   POSTGRES_PORT: "5432"
+
+  DJANGO_DEBUG: "0"
+  DJANGO_SECRET_KEY: "insecure-dev-key"    # у проді винести в Secret
+  DJANGO_ALLOWED_HOSTS: "*"
+
+  # нове — куди складати статику
+  DJANGO_STATIC_ROOT: "/var/www/static"
 
 health:
   path: /admin/login/

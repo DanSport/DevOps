@@ -1,0 +1,5 @@
+InstallCRDs: true
+server:
+  service:
+    port: 443
+    type: ClusterIP

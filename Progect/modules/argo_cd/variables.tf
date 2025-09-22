@@ -13,7 +13,7 @@ variable "namespace" {
 variable "chart_version" {
   description = "Версія чарта argo-cd"
   type        = string
-  default     = "6.7.12"
+  default     = "8.5.4"
 }
 
 variable "server_service_type" {

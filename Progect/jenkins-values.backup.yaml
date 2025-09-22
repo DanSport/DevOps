@@ -1,0 +1,42 @@
+controller:
+  JCasC:
+    configScripts:
+      pod-template: "      jenkins:\r\n        clouds:\r\n          - kubernetes:\r\n
+        \             name: \"kubernetes\"\r\n              serverUrl: \"https://kubernetes.default.svc\"\r\n
+        \             namespace: \"jenkins\"\r\n              jenkinsUrl: \"http://jenkins.jenkins.svc.cluster.local:8080\"\r\n
+        \             templates:\r\n                - name: \"default\"\r\n                  label:
+        \"default\"\r\n                  serviceAccount: \"jenkins-sa\"\r\n                  containers:\r\n
+        \                   - name: \"kaniko\"\r\n                      image: \"gcr.io/kaniko-project/executor:latest\"\r\n
+        \                     command: \"cat\"\r\n                      ttyEnabled:
+        true\r\n                      envVars:\n                        - envVar:\n
+        \                           key: ECR_URI\n                            value:
+        \"785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr\"\r\n                  #
+        ВАЖЛИВО: volumes у форматі Kubernetes plugin\r\n                  volumes:\r\n
+        \                   - emptyDirVolume:\r\n                        mountPath:
+        \"/kaniko/.cache\"\r\n                        memory: false\r\n"
+    enabled: true
+  admin:
+    createSecret: true
+    password: ""
+    username: admin
+  installPlugins:
+  - kubernetes
+  - workflow-aggregator
+  - git
+  - configuration-as-code
+  - credentials-binding
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: gp3
+  servicePort: 80
+  serviceType: ClusterIP
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: gp3
+rbac:
+  create: true
+serviceAccount:
+  create: false
+  name: jenkins-sa

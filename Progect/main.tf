@@ -152,7 +152,7 @@ module "jenkins" {
 
   namespace     = "jenkins"
   release_name  = "jenkins"
-  chart_version = "5.8.27"
+  
 
   service_type = "ClusterIP"
   service_port = 80
