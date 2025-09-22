@@ -16,12 +16,15 @@ RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
 COPY requirements.txt .
+# Якщо в майбутньому додаси пакети без готових wheel'ів, можливо доведеться прибрати --only-binary=:all:
 RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
 
 COPY django_app/ ./django_app/
-COPY entrypoint.sh .
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 WORKDIR /app/django_app
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "core.wsgi:application"]
+
+# КЛЮЧОВО: запускаємо через entrypoint (всередині він зробить migrate/collectstatic і стартане gunicorn)
+ENTRYPOINT ["/app/entrypoint.sh"]
