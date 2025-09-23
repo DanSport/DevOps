@@ -7,8 +7,8 @@ pipeline {
 
       containerTemplate {
         name 'kaniko'
-        image 'gcr.io/kaniko-project/executor:latest'
-        command 'cat'
+        image 'gcr.io/kaniko-project/executor:debug'  // <-- debug замість latest
+        command 'cat'                                 // тепер є в busybox
         ttyEnabled true
       }
 
