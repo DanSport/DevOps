@@ -11,30 +11,47 @@ spec:
     matchLabels:
       app: django-app
       release: {{ .Release.Name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.strategy.maxUnavailable | default 0 }}
+      maxSurge: {{ .Values.strategy.maxSurge | default 1 }}
   template:
     metadata:
       labels:
         app: django-app
         release: {{ .Release.Name }}
     spec:
+      {{- if .Values.serviceAccountName }}
+      serviceAccountName: {{ .Values.serviceAccountName }}
+      {{- end }}
+
+      {{- if or (.Values.init.waitForDb) (.Values.init.migrate) }}
       initContainers:
+        {{- if .Values.init.waitForDb }}
         - name: wait-for-db
-          image: postgres:15
+          image: {{ .Values.init.waitForDbImage | default "postgres:15" }}
           command:
             - sh
             - -c
             - >
-              until pg_isready -h {{ .Values.env.POSTGRES_HOST }} -p {{ .Values.env.POSTGRES_PORT }} -t 2;
+              until pg_isready -h {{ .Values.init.dbHost | default "postgres.default.svc.cluster.local" }}
+              -p {{ .Values.init.dbPort | default 5432 }} -t 2;
               do echo "waiting for db"; sleep 2; done
+        {{- end }}
+        {{- if .Values.init.migrate }}
         - name: migrate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
           workingDir: /app/django_app
-          command: ["sh","-lc","python manage.py migrate --noinput"]
+          command: ['sh','-lc','python manage.py migrate --noinput']
           envFrom:
             - configMapRef:
                 name: {{ include "django-app.fullname" . }}-config
             - secretRef:
                 name: {{ .Values.database.secretName | default "django-db-secret" }}
+        {{- end }}
+      {{- end }}
+
       containers:
         - name: django-app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -54,11 +71,15 @@ spec:
               port: 8000
             initialDelaySeconds: {{ .Values.health.readinessInitialDelay | default 5 }}
             periodSeconds: {{ .Values.health.readinessPeriod | default 5 }}
+            timeoutSeconds: {{ .Values.health.readinessTimeout | default 1 }}
+            failureThreshold: {{ .Values.health.readinessFailures | default 3 }}
           livenessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
               port: 8000
             initialDelaySeconds: {{ .Values.health.livenessInitialDelay | default 20 }}
             periodSeconds: {{ .Values.health.livenessPeriod | default 10 }}
+            timeoutSeconds: {{ .Values.health.livenessTimeout | default 1 }}
+            failureThreshold: {{ .Values.health.livenessFailures | default 3 }}
           resources:
             {{- toYaml (.Values.resources | default dict) | nindent 12 }}

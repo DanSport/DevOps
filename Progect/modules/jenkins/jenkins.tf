@@ -327,4 +327,59 @@ output "admin_password_hint" {
   description = "Як отримати admin пароль"
 }
 
+# ---- IAM роль для IRSA (Jenkins agents -> ECR) ----
 
+data "aws_iam_policy_document" "jenkins_irsa_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.eks.arn]  # якщо провайдер створюється в модулі EKS — підтягни як input
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(var.cluster_oidc_issuer_url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:jenkins:jenkins"]
+    }
+  }
+}
+
+resource "aws_iam_role" "jenkins_irsa" {
+  name               = "${var.cluster_name}-jenkins-irsa"
+  assume_role_policy = data.aws_iam_policy_document.jenkins_irsa_trust.json
+}
+
+data "aws_iam_policy_document" "ecr_push" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:CompleteLayerUpload",
+      "ecr:InitiateLayerUpload",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:GetAuthorizationToken"
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "jenkins_ecr" {
+  role   = aws_iam_role.jenkins_irsa.id
+  policy = data.aws_iam_policy_document.ecr_push.json
+}
+
+# ---- K8s ServiceAccount з анотацією на IAM роль ----
+
+resource "kubernetes_service_account" "jenkins" {
+  metadata {
+    name      = "jenkins"
+    namespace = "jenkins"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.jenkins_irsa.arn
+    }
+  }
+}
