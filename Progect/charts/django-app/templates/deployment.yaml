@@ -32,7 +32,9 @@ spec:
           command: ["sh","-lc","python manage.py migrate --noinput"]
           envFrom:
             - configMapRef:
-                name: {{ .Release.Name }}-django-app-config
+                name: {{ include "django-app.fullname" . }}-config
+            - secretRef:
+                name: {{ .Values.database.secretName | default "django-db-secret" }}
       containers:
         - name: django-app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -43,7 +45,9 @@ spec:
             - containerPort: 8000
           envFrom:
             - configMapRef:
-                name: {{ .Release.Name }}-django-app-config
+                name: {{ include "django-app.fullname" . }}-config
+            - secretRef:
+                name: {{ .Values.database.secretName | default "django-db-secret" }}
           readinessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
