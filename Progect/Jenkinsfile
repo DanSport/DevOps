@@ -1,143 +1,65 @@
 pipeline {
-  // Агент у Kubernetes (без залежності від UI-шаблонів)
   agent {
     kubernetes {
-      label 'default'
-      defaultContainer 'jnlp'
-      yaml """
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-    jenkins/role: agent
-spec:
-  serviceAccountName: jenkins-sa
-  restartPolicy: Never
-  containers:
-  - name: jnlp
-    image: jenkins/inbound-agent:3301.v4363ddcca_4e7-1
-    args:
-    - \\$(computer.jnlpmac)
-    - \\$(computer.name)
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:v1.23.2-debug
-    imagePullPolicy: Always
-    command: ["/busybox/sh"]
-    args: ["-c","sleep infinity"]
-    tty: true
-    workingDir: /workspace
-    volumeMounts:
-    - name: kaniko-cache
-      mountPath: /kaniko/.cache
-  volumes:
-  - name: kaniko-cache
-    emptyDir: {}
-"""
+      label 'kaniko'
+      inheritFrom 'kaniko'
     }
   }
-
-  options {
-    timestamps()
-    ansiColor('xterm')
-    disableConcurrentBuilds()
-  }
-
+  options { timestamps(); ansiColor('xterm') }
   environment {
-    // === ЗМІНИ ПІД СЕБЕ, якщо треба ===
-    AWS_REGION = 'us-east-1'
-    // з Terraform output:
-    ECR_URI    = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
-
-    // гілка GitOps (залишив main; якщо у тебе lesson-8-9 — просто заміни)
-    GITOPS_BRANCH     = 'main'
-    GITOPS_REPO_SSH   = 'git@github.com:DanSport/DevOps.git'
-    GITOPS_CHART_PATH = 'Progect/charts/django-app'
-    GIT_CRED_ID       = 'gitops-ssh'
-
-    SAFE_BRANCH = "${env.BRANCH_NAME?.replaceAll(/[^A-Za-z0-9_.-]/, '-') ?: 'main'}"
-    IMAGE_TAG   = "${SAFE_BRANCH}-${env.BUILD_NUMBER ?: '0'}"
+    AWS_REGION    = 'us-east-1'
+    ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
+    APP_NAME      = 'django-app'
+    GITOPS_BRANCH = 'lesson-8-9'
+    VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
+    GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
-
   stages {
-
-    stage('Checkout source') {
+    stage('Checkout'){ steps{ checkout scm; sh 'git status' } }
+    stage('Build & Push (Kaniko)'){
       steps {
-        checkout scm
-        sh 'git config --global --add safe.directory "$PWD"'
-      }
-    }
-
-    stage('Build & Push (Kaniko → ECR)') {
-      steps {
-        container('kaniko') {
-          sh '''#!/usr/bin/env bash
-            set -euo pipefail
-
-            test -f Dockerfile || { echo "❌ Dockerfile not found"; exit 1; }
-
-            # Kaniko автоматично використовує креденшли з IRSA/ServiceAccount.
-            # Якщо IRSA не налаштовано, пуш у ECR впаде з AccessDenied.
-
+        container('kaniko'){
+          sh '''
+            set -euxo pipefail
+            TAG="build-${BUILD_NUMBER}"
             /kaniko/executor \
-              --context="$PWD" \
-              --dockerfile="$PWD/Dockerfile" \
-              --destination="${ECR_URI}:${IMAGE_TAG}" \
+              --context="$WORKSPACE" \
+              --dockerfile=Dockerfile \
+              --destination="${ECR_URI}:${TAG}" \
               --destination="${ECR_URI}:latest" \
-              --single-snapshot \
-              --cache=true \
-              --cache-ttl=48h
+              --cache=true --snapshotMode=redo
+            echo "${TAG}" > .image_tag
           '''
         }
       }
     }
-
-    stage('Clone GitOps & bump tag') {
+    stage('Bump Helm values & Push'){
       steps {
-        sshagent (credentials: [env.GIT_CRED_ID]) {
-          sh '''#!/usr/bin/env bash
-            set -euo pipefail
-
-            rm -rf gitops && mkdir -p gitops
-            git clone --branch "${GITOPS_BRANCH}" --depth 1 "${GITOPS_REPO_SSH}" gitops
-
-            values_file="gitops/${GITOPS_CHART_PATH}/values.yaml"
-            test -f "$values_file" || { echo "❌ $values_file not found"; exit 1; }
-
-            # якщо yq відсутній — застосуємо безпечний sed
+        sshagent(credentials: ['gitops-ssh']) {
+          sh '''
+            set -euxo pipefail
+            TAG="$(cat .image_tag)"
+            git remote set-url origin "${GIT_SSH_URL}"
+            git fetch origin "${GITOPS_BRANCH}"
+            git checkout "${GITOPS_BRANCH}"
             if command -v yq >/dev/null 2>&1; then
-              yq -i ".image.tag = \\"${IMAGE_TAG}\\"" "$values_file" || true
-              yq -i "(.tag // .image.tag) = \\"${IMAGE_TAG}\\"" "$values_file" || true
+              yq -i '.image.tag = env(TAG)' "${VALUES_FILE}"
             else
-              # 'tag: ...'
-              sed -i -E 's|^([[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
-              # або 'image: { tag: ... }'
-              sed -i -E 's|^([[:space:]]*image:[[:space:]]*\\{?[[:space:]]*tag:[[:space:]]*).*$|\\1"'"${IMAGE_TAG}"'"|' "$values_file" || true
+              sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}"
+              rm -f "${VALUES_FILE}.bak"
             fi
-
-            pushd gitops
-              git config user.email "ci@local"
-              git config user.name  "jenkins-ci"
-              git add "${GITOPS_CHART_PATH}/values.yaml" || true
-
-              if ! git diff --cached --quiet; then
-                git commit -m "ci: bump image tag to ${IMAGE_TAG}"
-                git push origin "${GITOPS_BRANCH}"
-              else
-                echo "ℹ️ nothing to commit (tag unchanged)"
-              fi
-            popd
+            git config user.email "ci@local"
+            git config user.name  "jenkins-ci"
+            git add "${VALUES_FILE}" || true
+            git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]" || echo "No changes to commit"
+            git push origin "${GITOPS_BRANCH}"
           '''
         }
       }
     }
   }
-
   post {
-    success {
-      echo "✅ Pushed ${ECR_URI}:${IMAGE_TAG} and updated ${GITOPS_REPO_SSH}:${GITOPS_BRANCH}"
-    }
-    failure {
-      echo "❌ Pipeline failed. Check the logs."
-    }
+    success { echo '✅ Пуш у ECR і bump values.yaml — ок. Argo CD підхопить зміни.' }
+    failure { echo '❌ Перевір логи стадії, де впало.' }
   }
 }
