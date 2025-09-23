@@ -1,23 +1,17 @@
 pipeline {
   agent {
     kubernetes {
-      // якщо у тебе вже є podTemplate "kaniko" у Jenkins — можна залишити цю стрічку;
-      // якщо ні — все одно спрацює, бо нижче ми явно додаємо containerTemplate.
+      // якщо маєш podTemplate "kaniko" у Jenkins — inheritFrom підхопить його;
+      // якщо ні — нижче явно додаємо контейнер kaniko.
       inheritFrom 'kaniko'
 
-      // явне визначення контейнера Kaniko (без YAML)
       containerTemplate {
         name 'kaniko'
         image 'gcr.io/kaniko-project/executor:latest'
         command 'cat'
         ttyEnabled true
-        // кеш каніко
-        volumeMounts([volumeMount(name: 'kaniko-cache', mountPath: '/kaniko/.cache')])
       }
-      volumes {
-        emptyDirVolume(mountPath: '/kaniko/.cache', memory: false, name: 'kaniko-cache')
-      }
-      // за замовчуванням jnlp як робочий контейнер
+
       defaultContainer 'jnlp'
       serviceAccount 'jenkins'
     }
@@ -64,20 +58,15 @@ pipeline {
           sh '''
             set -euxo pipefail
             TAG="$(cat .image_tag)"
-
-            # на пуш міняємо URL на SSH
             git remote set-url origin "${GIT_SSH_URL}"
-
             git fetch origin "${GITOPS_BRANCH}"
             git checkout "${GITOPS_BRANCH}"
-
             if command -v yq >/dev/null 2>&1; then
               yq -i '.image.tag = env(TAG)' "${VALUES_FILE}"
             else
               sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}"
               rm -f "${VALUES_FILE}.bak"
             fi
-
             git config user.email "ci@local"
             git config user.name  "jenkins-ci"
             git add "${VALUES_FILE}" || true
