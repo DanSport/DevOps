@@ -5,7 +5,7 @@ pipeline {
       inheritFrom 'kaniko'
     }
   }
-  options { timestamps(); ansiColor('xterm') }
+
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
@@ -14,50 +14,71 @@ pipeline {
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
+
   stages {
-    stage('Checkout'){ steps{ checkout scm; sh 'git status' } }
-    stage('Build & Push (Kaniko)'){
+    stage('Checkout') {
       steps {
-        container('kaniko'){
-          sh '''
-            set -euxo pipefail
-            TAG="build-${BUILD_NUMBER}"
-            /kaniko/executor \
-              --context="$WORKSPACE" \
-              --dockerfile=Dockerfile \
-              --destination="${ECR_URI}:${TAG}" \
-              --destination="${ECR_URI}:latest" \
-              --cache=true --snapshotMode=redo
-            echo "${TAG}" > .image_tag
-          '''
+        timestamps {
+          ansiColor('xterm') {
+            checkout scm
+            sh 'git status'
+          }
         }
       }
     }
-    stage('Bump Helm values & Push'){
+
+    stage('Build & Push (Kaniko)') {
       steps {
-        sshagent(credentials: ['gitops-ssh']) {
-          sh '''
-            set -euxo pipefail
-            TAG="$(cat .image_tag)"
-            git remote set-url origin "${GIT_SSH_URL}"
-            git fetch origin "${GITOPS_BRANCH}"
-            git checkout "${GITOPS_BRANCH}"
-            if command -v yq >/dev/null 2>&1; then
-              yq -i '.image.tag = env(TAG)' "${VALUES_FILE}"
-            else
-              sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}"
-              rm -f "${VALUES_FILE}.bak"
-            fi
-            git config user.email "ci@local"
-            git config user.name  "jenkins-ci"
-            git add "${VALUES_FILE}" || true
-            git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]" || echo "No changes to commit"
-            git push origin "${GITOPS_BRANCH}"
-          '''
+        timestamps {
+          ansiColor('xterm') {
+            container('kaniko') {
+              sh '''
+                set -euxo pipefail
+                TAG="build-${BUILD_NUMBER}"
+                /kaniko/executor \
+                  --context="$WORKSPACE" \
+                  --dockerfile=Dockerfile \
+                  --destination="${ECR_URI}:${TAG}" \
+                  --destination="${ECR_URI}:latest" \
+                  --cache=true --snapshotMode=redo
+                echo "${TAG}" > .image_tag
+              '''
+            }
+          }
+        }
+      }
+    }
+
+    stage('Bump Helm values & Push') {
+      steps {
+        timestamps {
+          ansiColor('xterm') {
+            sshagent (credentials: ['gitops-ssh']) {
+              sh '''
+                set -euxo pipefail
+                TAG="$(cat .image_tag)"
+                git remote set-url origin "${GIT_SSH_URL}"
+                git fetch origin "${GITOPS_BRANCH}"
+                git checkout "${GITOPS_BRANCH}"
+                if command -v yq >/dev/null 2>&1; then
+                  yq -i '.image.tag = env(TAG)' "${VALUES_FILE}"
+                else
+                  sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}"
+                  rm -f "${VALUES_FILE}.bak"
+                fi
+                git config user.email "ci@local"
+                git config user.name  "jenkins-ci"
+                git add "${VALUES_FILE}" || true
+                git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]" || echo "No changes to commit"
+                git push origin "${GITOPS_BRANCH}"
+              '''
+            }
+          }
         }
       }
     }
   }
+
   post {
     success { echo '✅ Пуш у ECR і bump values.yaml — ок. Argo CD підхопить зміни.' }
     failure { echo '❌ Перевір логи стадії, де впало.' }
