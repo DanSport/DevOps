@@ -24,16 +24,24 @@ autoscaling:
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
 
-env: # буде в ConfigMap
+env:
   DJANGO_DEBUG: "1"
   DJANGO_ALLOWED_HOSTS: "*"
+
+  # Для Django (settings.py зазвичай читає DB_*)
+  DB_NAME: "appdb"
+  DB_USER: "appuser"
+  DB_HOST: "db"
+  DB_PORT: "5432"
+
+  # Для init/wait-for-db та postgres-контейнера (читають POSTGRES_*)
   POSTGRES_DB: "appdb"
   POSTGRES_USER: "appuser"
-  POSTGRES_PASSWORD: "apppass"
-  POSTGRES_HOST: "db"     # за потреби змінити
+  POSTGRES_HOST: "db"
   POSTGRES_PORT: "5432"
-  DJANGO_STATIC_ROOT: "/var/www/static"
 
+  DJANGO_STATIC_ROOT: "/var/www/static"
+  
 health:
   path: /admin/login/
   readinessInitialDelay: 5
