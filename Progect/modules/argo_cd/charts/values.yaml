@@ -4,7 +4,7 @@ applications:
     source:
       repoURL: ${app_repo_url}
       path: ${app_path}
-      targetRevision: ${app_revision}
+      targetRevision: main
       helm:
         valueFiles: ${app_value_files_yaml}
     destination:
