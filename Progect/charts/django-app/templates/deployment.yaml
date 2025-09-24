@@ -6,20 +6,6 @@ metadata:
     {{- include "django-app.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount | default 2 }}
-  {{- /* БЕЗПЕЧНИЙ strategy: якщо .Values.strategy порожній — підставляємо дефолти */}}
-  {{- if .Values.strategy }}
-  strategy:
-    type: {{ .Values.strategy.type | default "RollingUpdate" }}
-    rollingUpdate:
-      maxUnavailable: {{ .Values.strategy.maxUnavailable | default 0 }}
-      maxSurge: {{ .Values.strategy.maxSurge | default 1 }}
-  {{- else }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  {{- end }}
   selector:
     matchLabels:
       app: {{ include "django-app.name" . }}
@@ -33,18 +19,9 @@ spec:
         - name: wait-for-db
           image: postgres:15
           imagePullPolicy: IfNotPresent
-          {{- /* envFrom рендеримо ТІЛЬКИ якщо є configMapName/secretName */}}
-          {{- if or .Values.envFrom.configMapName .Values.envFrom.secretName }}
           envFrom:
-            {{- if .Values.envFrom.configMapName }}
             - configMapRef:
-                name: {{ .Values.envFrom.configMapName }}
-            {{- end }}
-            {{- if .Values.envFrom.secretName }}
-            - secretRef:
-                name: {{ .Values.envFrom.secretName }}
-            {{- end }}
-          {{- end }}
+                name: {{ include "django-app.fullname" . }}-config
           command:
             - /bin/sh
             - -lc
@@ -58,17 +35,9 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
           workingDir: /app/django_app
-          {{- if or .Values.envFrom.configMapName .Values.envFrom.secretName }}
           envFrom:
-            {{- if .Values.envFrom.configMapName }}
             - configMapRef:
-                name: {{ .Values.envFrom.configMapName }}
-            {{- end }}
-            {{- if .Values.envFrom.secretName }}
-            - secretRef:
-                name: {{ .Values.envFrom.secretName }}
-            {{- end }}
-          {{- end }}
+                name: {{ include "django-app.fullname" . }}-config
           env:
             - name: DB_PASSWORD
               valueFrom:
@@ -85,22 +54,9 @@ spec:
           ports:
             - containerPort: 8000
           command: ["python","manage.py","runserver","0.0.0.0:8000"]
-          {{- /* для основного контейнера — або конкретний configMap/secret з values, або дефолтний -config */}}
-          {{- if or .Values.envFrom.configMapName .Values.envFrom.secretName }}
-          envFrom:
-            {{- if .Values.envFrom.configMapName }}
-            - configMapRef:
-                name: {{ .Values.envFrom.configMapName }}
-            {{- end }}
-            {{- if .Values.envFrom.secretName }}
-            - secretRef:
-                name: {{ .Values.envFrom.secretName }}
-            {{- end }}
-          {{- else }}
           envFrom:
             - configMapRef:
                 name: {{ include "django-app.fullname" . }}-config
-          {{- end }}
           env:
             - name: DB_PASSWORD
               valueFrom:
@@ -121,4 +77,5 @@ spec:
             periodSeconds: {{ .Values.health.livenessPeriod | default 10 }}
           resources:
             {{- toYaml (.Values.resources | default dict) | nindent 12 }}
+
             
