@@ -35,7 +35,6 @@ spec:
         requests: { cpu: "100m", memory: "128Mi" }
         limits:   { cpu: "1",    memory: "1Gi" }
 
-    # ЯВНО визначаємо jnlp і задаємо тунель на сервіс agent’ів
     - name: jnlp
       image: jenkins/inbound-agent:3327.v868139a_d00e0-6
       args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
@@ -67,28 +66,27 @@ spec:
     stage('Checkout') {
       steps {
         checkout scm
-        sh '''
-          set -euxo pipefail
-          git --version
-          git rev-parse --short HEAD || true
-        '''
+        // <-- ВАЖЛИВО: запускаємо bash через shebang
+        sh '''#!/bin/bash -euo pipefail
+git --version
+git rev-parse --short HEAD || true
+'''
       }
     }
 
     stage('Build & Push (Kaniko)') {
       steps {
         container('kaniko') {
-          sh '''
-            set -euxo pipefail
-            TAG="build-${BUILD_NUMBER}"
-            /kaniko/executor \
-              --context="$WORKSPACE" \
-              --dockerfile=Dockerfile \
-              --destination="${ECR_URI}:${TAG}" \
-              --destination="${ECR_URI}:latest" \
-              --cache=true --snapshotMode=redo
-            echo "${TAG}" > .image_tag
-          '''
+          sh '''#!/bin/sh -eux
+TAG="build-${BUILD_NUMBER}"
+/kaniko/executor \
+  --context="$WORKSPACE" \
+  --dockerfile=Dockerfile \
+  --destination="${ECR_URI}:${TAG}" \
+  --destination="${ECR_URI}:latest" \
+  --cache=true --snapshotMode=redo
+echo "${TAG}" > .image_tag
+'''
         }
       }
     }
@@ -97,26 +95,27 @@ spec:
       steps {
         container('git-tools') {
           sshagent (credentials: ['gitops-ssh']) {
-            sh '''
-              set -euxo pipefail
-              mkdir -p ~/.ssh && chmod 700 ~/.ssh
-              ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-              chmod 644 ~/.ssh/known_hosts
+            // <-- bash + pipefail тут також
+            sh '''#!/bin/bash -euo pipefail
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+chmod 644 ~/.ssh/known_hosts
 
-              TAG="$(cat .image_tag)"
+TAG="$(cat .image_tag)"
 
-              git remote set-url origin "${GIT_SSH_URL}"
-              git fetch origin "${GITOPS_BRANCH}"
-              git checkout "${GITOPS_BRANCH}"
+git remote set-url origin "${GIT_SSH_URL}"
+git fetch origin "${GITOPS_BRANCH}"
+git checkout "${GITOPS_BRANCH}"
 
-              sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}" && rm -f "${VALUES_FILE}.bak"
+# оновлюємо image.tag у values.yaml
+sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}" && rm -f "${VALUES_FILE}.bak"
 
-              git config user.email "ci@local"
-              git config user.name  "jenkins-ci"
-              git add "${VALUES_FILE}" || true
-              git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]" || echo "No changes to commit"
-              git push origin "${GITOPS_BRANCH}"
-            '''
+git config user.email "ci@local"
+git config user.name  "jenkins-ci"
+git add "${VALUES_FILE}" || true
+git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]" || echo "No changes to commit"
+git push origin "${GITOPS_BRANCH}"
+'''
           }
         }
       }
@@ -125,6 +124,6 @@ spec:
 
   post {
     success { echo '✅ Образ у ECR і values.yaml оновлено. Змерджи main → lesson-8-9, щоб Argo CD підхопив.' }
-    failure { echo '❌ Перевір логи: здебільшого це тунель/SSH або Kaniko.' }
+    failure { echo '❌ Перевір логи: найчастіше це shell (bash), SSH/known_hosts або Kaniko.' }
   }
 }
