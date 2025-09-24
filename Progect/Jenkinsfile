@@ -92,43 +92,38 @@ echo "${TAG}" > .image_tag
     }
 
     stage('Bump Helm values & Push') {
-      steps {
-        container('git-tools') {
-          withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
-                                             keyFileVariable: 'GIT_SSH_KEY',
-                                             usernameVariable: 'GIT_SSH_USER')]) {
-            sh '''#!/usr/bin/env bash
-set -euo pipefail
+  when { expression { return env.TAG?.trim() } } // щоб мати TAG з попередньої стадії
+  steps {
+    container('git-tools') {
+      sshagent(credentials: ['gitops-ssh']) {
+        sh '''
+          set -euo pipefail
+          export HELM_VALUES="chart/values.yaml"   # <=== ПОМІНЯЙ на свій шлях
 
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-chmod 644 ~/.ssh/known_hosts
-export GIT_SSH_COMMAND="ssh -i ${GIT_SSH_KEY} -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+          # known_hosts для GitHub
+          mkdir -p ~/.ssh
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/known_hosts
 
-TAG="$(cat .image_tag)"
+          # налаштування git та гарантовано SSH remote
+          git config user.name "Jenkins CI"
+          git config user.email "ci@local"
+          git remote set-url origin git@github.com:DanSport/DevOps.git
 
-git remote set-url origin "${GIT_SSH_URL}"
-git fetch origin "${GITOPS_BRANCH}"
-git checkout "${GITOPS_BRANCH}"
+          # bump образу у values
+          sed -i "s|^\\s*tag:\\s*.*$|  tag: ${TAG}|g" "$HELM_VALUES"
 
-# оновлюємо image.tag у values.yaml
-sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}" && rm -f "${VALUES_FILE}.bak"
+          git add "$HELM_VALUES" || true
+          git commit -m "ci: bump image tag to ${TAG} [skip ci]" || true
 
-git config user.email "ci@local"
-git config user.name  "jenkins-ci"
-git add "${VALUES_FILE}" || true
-
-if ! git diff --cached --quiet; then
-  git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]"
-  git push origin "${GITOPS_BRANCH}"
-else
-  echo "No changes to commit"
-fi
-'''
-          }
-        }
+          # пуш у потрібну гілку (за потреби поміняй на main)
+          git push origin HEAD:lesson-8-9
+        '''
       }
     }
+  }
+}
   }
 
   post {
