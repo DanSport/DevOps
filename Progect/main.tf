@@ -126,7 +126,7 @@ module "argo_cd" {
 
   # GitOps application
   app_repo_url    = "https://github.com/DanSport/DevOps.git"
-  app_revision    = "main"
+  app_revision    = "lesson-8-9"
   app_path        = "Progect/charts/django-app"
   destination_ns  = "default"
   app_value_files = []
