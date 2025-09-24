@@ -47,3 +47,15 @@ health:
   readinessPeriod: 5
   livenessInitialDelay: 20
   livenessPeriod: 10
+
+strategy:
+  type: RollingUpdate
+  maxUnavailable: 0
+  maxSurge: 1
+  
+init: {}
+envFrom: {}
+strategy:
+  type: RollingUpdate
+  maxUnavailable: 0
+  maxSurge: 1

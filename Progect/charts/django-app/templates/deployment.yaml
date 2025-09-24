@@ -12,10 +12,10 @@ spec:
       app: django-app
       release: {{ .Release.Name }}
   strategy:
-    type: RollingUpdate
+    type: {{ default "RollingUpdate" .Values.strategy.type }}
     rollingUpdate:
-      maxUnavailable: {{ .Values.strategy.maxUnavailable | default 0 }}
-      maxSurge: {{ .Values.strategy.maxSurge | default 1 }}
+      maxUnavailable: {{ default 0 .Values.strategy.maxUnavailable }}
+      maxSurge: {{ default 1 .Values.strategy.maxSurge }}
   template:
     metadata:
       labels:
