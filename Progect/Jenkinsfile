@@ -69,6 +69,8 @@ spec:
         sh '''#!/usr/bin/env bash
 set -euo pipefail
 git --version
+# виправляємо "dubious ownership"
+git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
 '''
       }
@@ -84,7 +86,7 @@ TAG="build-${BUILD_NUMBER}"
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
   --destination="${ECR_URI}:latest" \
-  --cache=true --snapshotMode=redo
+  --cache=false
 echo "${TAG}" > .image_tag
 '''
         }
@@ -94,12 +96,18 @@ echo "${TAG}" > .image_tag
     stage('Bump Helm values & Push') {
       steps {
         container('git-tools') {
-          sshagent (credentials: ['gitops-ssh']) {
+          // ⬇️ заміна sshagent: дістаємо SSH-ключ як файл і використовуємо GIT_SSH_COMMAND
+          withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
+                                             keyFileVariable: 'GIT_SSH_KEY',
+                                             usernameVariable: 'GIT_SSH_USER')]) {
             sh '''#!/usr/bin/env bash
 set -euo pipefail
+
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 chmod 644 ~/.ssh/known_hosts
+
+export GIT_SSH_COMMAND="ssh -i ${GIT_SSH_KEY} -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
 
 TAG="$(cat .image_tag)"
 
@@ -113,8 +121,13 @@ sed -i.bak -E "s#^(\\s*tag:\\s*).*#\\1${TAG}#g" "${VALUES_FILE}" && rm -f "${VAL
 git config user.email "ci@local"
 git config user.name  "jenkins-ci"
 git add "${VALUES_FILE}" || true
-git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]" || echo "No changes to commit"
-git push origin "${GITOPS_BRANCH}"
+
+if ! git diff --cached --quiet; then
+  git commit -m "ci: bump ${APP_NAME} image tag to ${TAG} [skip ci]"
+  git push origin "${GITOPS_BRANCH}"
+else
+  echo "No changes to commit"
+fi
 '''
           }
         }
@@ -123,7 +136,7 @@ git push origin "${GITOPS_BRANCH}"
   }
 
   post {
-    success { echo '✅ Образ у ECR і values.yaml оновлено. Змерджи main → lesson-8-9, щоб Argo CD підхопив.' }
-    failure { echo '❌ Перевір логи: bash/shebang, SSH/known_hosts або Kaniko.' }
+    success { echo '✅ Образ у ECR запушено і values.yaml оновлено. Зроби merge main → lesson-8-9, щоб Argo CD підхопив.' }
+    failure { echo '❌ Якщо впаде знову — кидай шматок логу стадії, що впала (Kaniko / Push у Git).' }
   }
 }
