@@ -57,7 +57,7 @@ spec:
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'   // пушимо в main
+    GITOPS_BRANCH = 'main'   // пушимо в main (важливо для завдання)
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
@@ -92,42 +92,45 @@ echo "${TAG}" > .image_tag
     }
 
     stage('Bump Helm values & Push') {
-  when { expression { return env.TAG?.trim() } } // щоб мати TAG з попередньої стадії
-  steps {
-    container('git-tools') {
-      sshagent(credentials: ['gitops-ssh']) {
-        sh '''
-          set -euo pipefail
-          export HELM_VALUES="chart/values.yaml"   # <=== ПОМІНЯЙ на свій шлях
+      steps {
+        container('git-tools') {
+          sshagent(credentials: ['gitops-ssh']) {
+            sh '''#!/usr/bin/env bash
+set -euo pipefail
 
-          # known_hosts для GitHub
-          mkdir -p ~/.ssh
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-          chmod 700 ~/.ssh
-          chmod 600 ~/.ssh/known_hosts
+# дістаємо тег з попередньої стадії
+TAG="$(cat .image_tag)"
+[ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
 
-          # налаштування git та гарантовано SSH remote
-          git config user.name "Jenkins CI"
-          git config user.email "ci@local"
-          git remote set-url origin git@github.com:DanSport/DevOps.git
+# known_hosts (на випадок, якщо глобально не сконфігурено)
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+chmod 600 ~/.ssh/known_hosts
 
-          # bump образу у values
-          sed -i "s|^\\s*tag:\\s*.*$|  tag: ${TAG}|g" "$HELM_VALUES"
+# працюємо в окремій копії гілки main, щоб не чіпати робочий workspace
+workdir="$(mktemp -d)"
+git clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
+cd "$workdir/repo"
 
-          git add "$HELM_VALUES" || true
-          git commit -m "ci: bump image tag to ${TAG} [skip ci]" || true
+git config user.name  "Jenkins CI"
+git config user.email "ci@local"
 
-          # пуш у потрібну гілку (за потреби поміняй на main)
-          git push origin HEAD:lesson-8-9
-        '''
+# оновлюємо тільки рядок з tag: у потрібному values.yaml
+sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
+
+git add "${VALUES_FILE}" || true
+git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]" || { echo "No changes to commit"; exit 0; }
+git push origin "${GITOPS_BRANCH}"
+'''
+          }
+        }
       }
     }
   }
-}
-  }
 
   post {
-    success { echo '✅ Образ у ECR запушено і values.yaml оновлено. Зроби merge main → lesson-8-9, щоб Argo CD підхопив.' }
+    success { echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD сам підхопить зміни.' }
     failure { echo '❌ Дивись логи конкретної стадії (Kaniko / Push у Git).' }
   }
 }
