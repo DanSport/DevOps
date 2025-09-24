@@ -69,7 +69,6 @@ spec:
         sh '''#!/usr/bin/env bash
 set -euo pipefail
 git --version
-# виправляємо "dubious ownership"
 git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
 '''
@@ -85,7 +84,6 @@ TAG="build-${BUILD_NUMBER}"
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
-  --destination="${ECR_URI}:latest" \
   --cache=false
 echo "${TAG}" > .image_tag
 '''
@@ -96,7 +94,6 @@ echo "${TAG}" > .image_tag
     stage('Bump Helm values & Push') {
       steps {
         container('git-tools') {
-          // ⬇️ заміна sshagent: дістаємо SSH-ключ як файл і використовуємо GIT_SSH_COMMAND
           withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
                                              keyFileVariable: 'GIT_SSH_KEY',
                                              usernameVariable: 'GIT_SSH_USER')]) {
@@ -106,7 +103,6 @@ set -euo pipefail
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 chmod 644 ~/.ssh/known_hosts
-
 export GIT_SSH_COMMAND="ssh -i ${GIT_SSH_KEY} -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
 
 TAG="$(cat .image_tag)"
@@ -137,6 +133,6 @@ fi
 
   post {
     success { echo '✅ Образ у ECR запушено і values.yaml оновлено. Зроби merge main → lesson-8-9, щоб Argo CD підхопив.' }
-    failure { echo '❌ Якщо впаде знову — кидай шматок логу стадії, що впала (Kaniko / Push у Git).' }
+    failure { echo '❌ Дивись логи конкретної стадії (Kaniko / Push у Git).' }
   }
 }
