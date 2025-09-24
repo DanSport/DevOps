@@ -57,7 +57,7 @@ spec:
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'
+    GITOPS_BRANCH = 'main'   // пушимо в main
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
@@ -66,8 +66,8 @@ spec:
     stage('Checkout') {
       steps {
         checkout scm
-        // <-- ВАЖЛИВО: запускаємо bash через shebang
-        sh '''#!/bin/bash -euo pipefail
+        sh '''#!/usr/bin/env bash
+set -euo pipefail
 git --version
 git rev-parse --short HEAD || true
 '''
@@ -95,8 +95,8 @@ echo "${TAG}" > .image_tag
       steps {
         container('git-tools') {
           sshagent (credentials: ['gitops-ssh']) {
-            // <-- bash + pipefail тут також
-            sh '''#!/bin/bash -euo pipefail
+            sh '''#!/usr/bin/env bash
+set -euo pipefail
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 chmod 644 ~/.ssh/known_hosts
@@ -124,6 +124,6 @@ git push origin "${GITOPS_BRANCH}"
 
   post {
     success { echo '✅ Образ у ECR і values.yaml оновлено. Змерджи main → lesson-8-9, щоб Argo CD підхопив.' }
-    failure { echo '❌ Перевір логи: найчастіше це shell (bash), SSH/known_hosts або Kaniko.' }
+    failure { echo '❌ Перевір логи: bash/shebang, SSH/known_hosts або Kaniko.' }
   }
 }
