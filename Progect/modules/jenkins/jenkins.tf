@@ -11,7 +11,7 @@ locals {
   jcas_credentials = (
     var.github_username != null && var.github_username != "" &&
     var.github_token != null && var.github_token != ""
-  ) ? {
+    ) ? {
     credentials = <<YAML
       credentials:
         system:
@@ -29,7 +29,7 @@ locals {
   # --- Seed job (опційно) ---
   jcas_seed_job = (
     var.github_repo_url != null && var.github_repo_url != ""
-  ) ? {
+    ) ? {
     seed-job = <<YAML
       jobs:
         - script: >
@@ -40,9 +40,9 @@ locals {
                   remote {
                     url('${var.github_repo_url}')
                     ${(
-                      var.github_username != null && var.github_username != "" &&
-                      var.github_token != null && var.github_token != ""
-                    ) ? "credentials('github-token')" : ""}
+    var.github_username != null && var.github_username != "" &&
+    var.github_token != null && var.github_token != ""
+    ) ? "credentials('github-token')" : ""}
                   }
                   branches('*/main')
                 }
@@ -58,9 +58,9 @@ locals {
                             remote {
                               url("${var.github_repo_url}")
                               ${(
-                                var.github_username != null && var.github_username != "" &&
-                                var.github_token != null && var.github_token != ""
-                              ) ? "credentials('github-token')" : ""}
+    var.github_username != null && var.github_username != "" &&
+    var.github_token != null && var.github_token != ""
+) ? "credentials('github-token')" : ""}
                             }
                             branches("*/main")
                           }
@@ -72,11 +72,11 @@ locals {
               }
             }
     YAML
-  } : {}
+} : {}
 
-  # --- Pod template для Kubernetes plugin (JCasC синтаксис плагіна, не PodSpec!) ---
-  jcas_pod_template = {
-    pod-template = <<YAML
+# --- Pod template для Kubernetes plugin (JCasC синтаксис плагіна, не PodSpec!) ---
+jcas_pod_template = {
+  pod-template = <<YAML
       jenkins:
         clouds:
           - kubernetes:
@@ -94,18 +94,18 @@ locals {
                       command: "cat"
                       ttyEnabled: true
                       ${(
-                        var.ecr_repo_uri != null && var.ecr_repo_uri != ""
-                      ) ? "envVars:\n                        - envVar:\n                            key: ECR_URI\n                            value: \"${var.ecr_repo_uri}\"" : ""}
+  var.ecr_repo_uri != null && var.ecr_repo_uri != ""
+) ? "envVars:\n                        - envVar:\n                            key: ECR_URI\n                            value: \"${var.ecr_repo_uri}\"" : ""}
                   # ВАЖЛИВО: volumes у форматі Kubernetes plugin
                   volumes:
                     - emptyDirVolume:
                         mountPath: "/kaniko/.cache"
                         memory: false
     YAML
-  }
+}
 
-  # Фінальний набір JCasC
-  jcas_configscripts = merge(local.jcas_pod_template, local.jcas_credentials, local.jcas_seed_job)
+# Фінальний набір JCasC
+jcas_configscripts = merge(local.jcas_pod_template, local.jcas_credentials, local.jcas_seed_job)
 }
 
 # -----------------------------
@@ -255,7 +255,7 @@ resource "helm_release" "jenkins" {
         create = false
         name   = kubernetes_service_account.sa.metadata[0].name
       }
-      
+
     })
   ]
 
@@ -325,61 +325,4 @@ output "jenkins_cluster_dns" {
 output "admin_password_hint" {
   value       = var.admin_password == null ? "Пароль згенеровано чартом: kubectl -n ${var.namespace} get secret ${var.release_name} -o jsonpath={.data.jenkins-admin-password} | base64 -d" : "Пароль задано через var.admin_password"
   description = "Як отримати admin пароль"
-}
-
-# ---- IAM роль для IRSA (Jenkins agents -> ECR) ----
-
-data "aws_iam_policy_document" "jenkins_irsa_trust" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-    effect  = "Allow"
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.eks.arn]  # якщо провайдер створюється в модулі EKS — підтягни як input
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(var.cluster_oidc_issuer_url, "https://", "")}:sub"
-      values   = ["system:serviceaccount:jenkins:jenkins"]
-    }
-  }
-}
-
-resource "aws_iam_role" "jenkins_irsa" {
-  name               = "${var.cluster_name}-jenkins-irsa"
-  assume_role_policy = data.aws_iam_policy_document.jenkins_irsa_trust.json
-}
-
-data "aws_iam_policy_document" "ecr_push" {
-  statement {
-    effect = "Allow"
-    actions = [
-      "ecr:BatchCheckLayerAvailability",
-      "ecr:CompleteLayerUpload",
-      "ecr:InitiateLayerUpload",
-      "ecr:PutImage",
-      "ecr:UploadLayerPart",
-      "ecr:BatchGetImage",
-      "ecr:GetDownloadUrlForLayer",
-      "ecr:GetAuthorizationToken"
-    ]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_role_policy" "jenkins_ecr" {
-  role   = aws_iam_role.jenkins_irsa.id
-  policy = data.aws_iam_policy_document.ecr_push.json
-}
-
-# ---- K8s ServiceAccount з анотацією на IAM роль ----
-
-resource "kubernetes_service_account" "jenkins" {
-  metadata {
-    name      = "jenkins"
-    namespace = "jenkins"
-    annotations = {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.jenkins_irsa.arn
-    }
-  }
 }

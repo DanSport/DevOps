@@ -150,9 +150,8 @@ module "argo_cd" {
 module "jenkins" {
   source = "./modules/jenkins"
 
-  namespace     = "jenkins"
-  release_name  = "jenkins"
-  
+  namespace    = "jenkins"
+  release_name = "jenkins"
 
   service_type = "ClusterIP"
   service_port = 80

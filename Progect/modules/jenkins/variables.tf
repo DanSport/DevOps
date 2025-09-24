@@ -64,11 +64,6 @@ variable "cluster_name" {
   type        = string
 }
 
-variable "oidc_provider_arn" {
-  description = "ARN OIDC провайдера (з EKS модуля)"
-  type        = string
-}
-
 variable "oidc_provider_url" {
   description = "URL OIDC провайдера (з EKS модуля)"
   type        = string
@@ -134,4 +129,14 @@ variable "common_tags" {
   description = "Додаткові теги"
   type        = map(string)
   default     = {}
+}
+
+variable "oidc_provider_arn" {
+  type    = string
+  default = null
+}
+
+variable "cluster_oidc_issuer_url" {
+  type    = string
+  default = null
 }
