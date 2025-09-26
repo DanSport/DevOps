@@ -174,6 +174,7 @@ module "jenkins" {
   github_username = null
   github_token    = null
   github_repo_url = null
+  gitops_ssh_private_key = var.gitops_ssh_private_key
 
   providers = {
     kubernetes = kubernetes.eks

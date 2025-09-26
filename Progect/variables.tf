@@ -68,3 +68,9 @@ variable "github_repo_url" {
   type    = string
   default = null
 }
+
+variable "gitops_ssh_private_key" {
+  description = "Private SSH key for Git push (OpenSSH format)"
+  type        = string
+  sensitive   = true
+}
