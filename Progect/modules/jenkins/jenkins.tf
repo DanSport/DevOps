@@ -3,12 +3,6 @@
 ############################
 locals {
   jcas_configscripts = {
-    git-host-key = <<-YAML
-      unclassified:
-        gitHostKeyVerificationConfiguration:
-          sshHostKeyVerificationStrategy: "acceptFirstConnectionStrategy"
-    YAML
-
     jobs = <<-YAML
       jobs:
         - script: >
@@ -18,7 +12,7 @@ locals {
                 cpsScm {
                   scm {
                     git {
-                      remote('git@github.com:DanSport/DevOps.git')
+                      remote('https://github.com/DanSport/DevOps.git')   // checkout по HTTPS можемо поставити нижче, якщо треба
                       credentials('gitops-ssh')
                       branch('*/lesson-8-9')
                     }
