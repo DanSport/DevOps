@@ -140,3 +140,9 @@ variable "cluster_oidc_issuer_url" {
   type    = string
   default = null
 }
+
+variable "gitops_ssh_private_key" {
+  description = "Private SSH key (PEM/OpenSSH) for pushing to GitHub as git user"
+  type        = string
+  sensitive   = true
+}

@@ -14,6 +14,57 @@ controller:
   installPlugins:
     - ansicolor:1.0.4
     - timestamper:1.26
+    - configuration-as-code
+    - job-dsl
+    - git
+    - git-client
+    - ssh-credentials
+    - workflow-aggregator
+
+  containerEnv:
+    - name: GITOPS_SSH_PRIVATE_KEY
+      valueFrom:
+        secretKeyRef:
+          name: gitops-ssh
+          key: ssh-privatekey
+
+  JCasC:
+    configScripts:
+      gitops-credentials: |
+        credentials:
+          system:
+            domainCredentials:
+              - credentials:
+                  - basicSSHUserPrivateKey:
+                      scope: GLOBAL
+                      id: "gitops-ssh"
+                      username: "git"
+                      description: "GitHub deploy key for GitOps push"
+                      privateKeySource:
+                        directEntry:
+                          privateKey: "${GITOPS_SSH_PRIVATE_KEY}"
+
+      pipelines: |
+        jobs:
+          - script: >
+              pipelineJob('django-app-ci') {
+                description('CI/CD for Django app: build & push image to ECR, bump Helm values, push to repo')
+                definition {
+                  cpsScm {
+                    scm {
+                      git {
+                        remote('git@github.com:DanSport/DevOps.git')
+                        credentials('gitops-ssh')
+                        // якщо хочеш main — зміни нижче на '*/main'
+                        branch('*/lesson-8-9')
+                      }
+                    }
+                    scriptPath('Progect/Jenkinsfile')
+                  }
+                }
+                // тригер на SCM кожні 2 хвилини; можеш забрати, якщо не треба
+                triggers { scm('H/2 * * * *') }
+              }
 rbac:
   create: true
 

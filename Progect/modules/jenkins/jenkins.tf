@@ -257,6 +257,7 @@ resource "helm_release" "jenkins" {
       }
 
     })
+    depends_on = [kubernetes_secret.gitops_ssh]
   ]
 
   depends_on = [
@@ -302,6 +303,21 @@ resource "kubernetes_role_binding" "jenkins_config_reader_binding" {
 
   depends_on = [kubernetes_role.jenkins_config_reader]
 }
+resource "kubernetes_secret" "gitops_ssh" {
+  metadata {
+    name      = "gitops-ssh"
+    namespace = var.namespace
+  }
+
+  type = "kubernetes.io/ssh-auth"
+
+  // string_data дозволяє давати "людський" текст без base64
+  string_data = {
+    ssh-privatekey = var.gitops_ssh_private_key
+  }
+}
+
+
 
 # -----------------------------
 # Outputs
