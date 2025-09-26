@@ -257,11 +257,9 @@ resource "helm_release" "jenkins" {
       }
 
     })
-    depends_on = [kubernetes_secret.gitops_ssh]
-  ]
-
+    ]
   depends_on = [
-    kubernetes_service_account.sa
+    kubernetes_service_account.sa,kubernetes_secret.gitops_ssh
   ]
 }
 
