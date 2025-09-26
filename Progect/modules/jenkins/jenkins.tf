@@ -309,9 +309,10 @@ resource "kubernetes_secret" "gitops_ssh" {
 
   type = "kubernetes.io/ssh-auth"
 
-  // string_data дозволяє давати "людський" текст без base64
-  string_data = {
-    ssh-privatekey = var.gitops_ssh_private_key
+  # УВАЖНО: більшість версій провайдера САМІ base64-енкодять значення у data.
+  # Тому тут передаємо СИРИЙ текст ключа, без base64encode().
+  data = {
+    "ssh-privatekey" = var.gitops_ssh_private_key
   }
 }
 
