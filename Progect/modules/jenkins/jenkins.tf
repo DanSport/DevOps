@@ -1,128 +1,53 @@
+############################
+# JCasC scripts (host key + job DSL)
+############################
 locals {
-  tags = merge(
-    {
-      ManagedBy = "terraform"
-      Component = "jenkins"
-    },
-    var.common_tags
-  )
-
-  # --- Умовні шматки JCasC (креденшели для seed-job) ---
-  jcas_credentials = (
-    var.github_username != null && var.github_username != "" &&
-    var.github_token != null && var.github_token != ""
-    ) ? {
-    credentials = <<YAML
-      credentials:
-        system:
-          domainCredentials:
-            - credentials:
-                - usernamePassword:
-                    scope: GLOBAL
-                    id: github-token
-                    username: "${var.github_username}"
-                    password: "${var.github_token}"
-                    description: "GitHub PAT for seed job"
+  jcas_configscripts = {
+    git_host_key = <<-YAML
+      unclassified:
+        gitHostKeyVerificationConfiguration:
+          sshHostKeyVerificationStrategy: "acceptFirstConnectionStrategy"
     YAML
-  } : {}
 
-  # --- Seed job (опційно) ---
-  jcas_seed_job = (
-    var.github_repo_url != null && var.github_repo_url != ""
-    ) ? {
-    seed-job = <<YAML
+    jobs = <<-YAML
       jobs:
         - script: >
-            job('seed-job') {
-              description('Seed job to generate pipelines')
-              scm {
-                git {
-                  remote {
-                    url('${var.github_repo_url}')
-                    ${(
-    var.github_username != null && var.github_username != "" &&
-    var.github_token != null && var.github_token != ""
-    ) ? "credentials('github-token')" : ""}
-                  }
-                  branches('*/main')
-                }
-              }
-              steps {
-                dsl {
-                  text('''pipelineJob("goit-docker-django") {
-                    definition {
-                      cpsScm {
-                        scriptPath("Jenkinsfile")
-                        scm {
-                          git {
-                            remote {
-                              url("${var.github_repo_url}")
-                              ${(
-    var.github_username != null && var.github_username != "" &&
-    var.github_token != null && var.github_token != ""
-) ? "credentials('github-token')" : ""}
-                            }
-                            branches("*/main")
-                          }
-                        }
-                      }
+            pipelineJob('django-app-ci') {
+              description('CI/CD for Django app: build & push to ECR, bump Helm values, push to repo')
+              definition {
+                cpsScm {
+                  scm {
+                    git {
+                      remote('git@github.com:DanSport/DevOps.git')
+                      credentials('gitops-ssh')
+                      branch('*/lesson-8-9')  // або main, якщо ArgoCD дивиться на main
                     }
-                  }''')
+                  }
+                  scriptPath('Progect/Jenkinsfile')
                 }
               }
+              triggers { scm('H/2 * * * *') }
             }
     YAML
-} : {}
-
-# --- Pod template для Kubernetes plugin (JCasC синтаксис плагіна, не PodSpec!) ---
-jcas_pod_template = {
-  pod-template = <<YAML
-      jenkins:
-        clouds:
-          - kubernetes:
-              name: "kubernetes"
-              serverUrl: "https://kubernetes.default.svc"
-              namespace: "${var.namespace}"
-              jenkinsUrl: "http://jenkins.${var.namespace}.svc.cluster.local:${var.service_port}"
-              templates:
-                - name: "default"
-                  label: "default"
-                  serviceAccount: "jenkins-sa"
-                  containers:
-                    - name: "kaniko"
-                      image: "${var.kaniko_image}"
-                      command: "cat"
-                      ttyEnabled: true
-                      ${(
-  var.ecr_repo_uri != null && var.ecr_repo_uri != ""
-) ? "envVars:\n                        - envVar:\n                            key: ECR_URI\n                            value: \"${var.ecr_repo_uri}\"" : ""}
-                  # ВАЖЛИВО: volumes у форматі Kubernetes plugin
-                  volumes:
-                    - emptyDirVolume:
-                        mountPath: "/kaniko/.cache"
-                        memory: false
-    YAML
+  }
 }
 
-# Фінальний набір JCasC
-jcas_configscripts = merge(local.jcas_pod_template, local.jcas_credentials, local.jcas_seed_job)
-}
-
-# -----------------------------
+############################
 # Namespace
-# -----------------------------
+############################
 resource "kubernetes_namespace" "ns" {
   metadata {
     name = var.namespace
   }
 }
+
+############################
+# StorageClass (gp3)
+############################
 resource "kubernetes_storage_class_v1" "gp3" {
   metadata {
     name = "gp3"
-    # якщо хочеш одразу зробити дефолтним — розкоментуй анотацію нижче
-    # annotations = {
-    #   "storageclass.kubernetes.io/is-default-class" = "true"
-    # }
+    # annotations = { "storageclass.kubernetes.io/is-default-class" = "true" }
   }
 
   storage_provisioner = "ebs.csi.aws.com"
@@ -131,12 +56,12 @@ resource "kubernetes_storage_class_v1" "gp3" {
 
   parameters = {
     type = "gp3"
-    # за бажанням: fsType = "ext4", encrypted = "true", iops = "3000", throughput = "125"
   }
 }
-# -----------------------------
-# IRSA для Jenkins (Kaniko → ECR)
-# -----------------------------
+
+############################
+# IRSA: IAM role + policy for Jenkins SA (Kaniko → ECR)
+############################
 resource "aws_iam_role" "jenkins_irsa_role" {
   count = var.enable_irsa ? 1 : 0
   name  = "${var.cluster_name}-jenkins-irsa-role"
@@ -154,8 +79,6 @@ resource "aws_iam_role" "jenkins_irsa_role" {
       }
     }]
   })
-
-  tags = local.tags
 }
 
 resource "aws_iam_role_policy" "jenkins_ecr_policy" {
@@ -183,9 +106,9 @@ resource "aws_iam_role_policy" "jenkins_ecr_policy" {
   })
 }
 
-# -----------------------------
+############################
 # ServiceAccount (IRSA annotation)
-# -----------------------------
+############################
 resource "kubernetes_service_account" "sa" {
   metadata {
     name      = "jenkins-sa"
@@ -197,7 +120,34 @@ resource "kubernetes_service_account" "sa" {
   depends_on = [kubernetes_namespace.ns]
 }
 
+############################
+# SSH key as k8s Secret → auto-credential in Jenkins
+############################
+resource "kubernetes_secret" "gitops_ssh" {
+  metadata {
+    name      = "gitops-ssh"
+    namespace = var.namespace
+    labels = {
+      "jenkins.io/credentials-type" = "sshUserPrivateKey"
+    }
+    annotations = {
+      "jenkins.io/credentials-description" = "GitHub deploy key for GitOps push"
+      "jenkins.io/credentials-username"    = "git"
+      "jenkins.io/credentials-id"          = "gitops-ssh"
+    }
+  }
 
+  type = "kubernetes.io/ssh-auth"
+
+  # ВАЖЛИВО: провайдер сам base64-енкодить – даємо сирий ключ
+  data = {
+    "ssh-privatekey" = var.gitops_ssh_private_key
+  }
+}
+
+############################
+# Jenkins via Helm (JCasC увімкнено + потрібні плагіни)
+############################
 resource "helm_release" "jenkins" {
   name       = var.release_name
   namespace  = var.namespace
@@ -211,10 +161,7 @@ resource "helm_release" "jenkins" {
   max_history      = 3
 
   values = [
-    # базові дефолти з файлу (без installPlugins/JCasC/persistence!)
     file("${path.module}/values.yaml"),
-
-    # динаміка — все важливе тут
     yamlencode({
       controller = {
         admin = {
@@ -227,45 +174,49 @@ resource "helm_release" "jenkins" {
         serviceType = var.service_type
         servicePort = var.service_port
 
-        # PVC одразу на gp3 з потрібним розміром
         persistence = {
           enabled      = var.persistence_enabled
           storageClass = "gp3"
           size         = coalesce(var.storage_size, "10Gi")
         }
 
-        # JCasC
+        # JCasC: автоконфіг Jenkins (host key strategy + job DSL)
         JCasC = {
           enabled       = true
           configScripts = local.jcas_configscripts
         }
 
-        # Мінімальний набір плагінів БЕЗ фіксації версій (щоб уникнути конфліктів)
+        # Необхідні плагіни: Git, DSL, CasC, k8s credentials provider
         installPlugins = [
-          "kubernetes",
           "workflow-aggregator",
           "git",
+          "git-client",
+          "ssh-credentials",
+          "credentials-binding",
+          "kubernetes",
+          "kubernetes-credentials-provider",
           "configuration-as-code",
-          "credentials-binding"
+          "job-dsl"
         ]
       }
 
-      # Використовуємо наш SA, щоб не створювати той, що в чарті
+      # Використовуємо наш SA (із IRSA), чарт свій не створює
       serviceAccount = {
         create = false
         name   = kubernetes_service_account.sa.metadata[0].name
       }
-
     })
-    ]
+  ]
+
   depends_on = [
-    kubernetes_service_account.sa,kubernetes_secret.gitops_ssh
+    kubernetes_service_account.sa,
+    kubernetes_secret.gitops_ssh
   ]
 }
 
-# -----------------------------
-# RBAC на читання конфігів (щоб sidecar не падав)
-# -----------------------------
+############################
+# RBAC (опційно, на читання конфігів)
+############################
 resource "kubernetes_role" "jenkins_config_reader" {
   metadata {
     name      = "jenkins-config-reader"
@@ -301,26 +252,10 @@ resource "kubernetes_role_binding" "jenkins_config_reader_binding" {
 
   depends_on = [kubernetes_role.jenkins_config_reader]
 }
-resource "kubernetes_secret" "gitops_ssh" {
-  metadata {
-    name      = "gitops-ssh"
-    namespace = var.namespace
-  }
 
-  type = "kubernetes.io/ssh-auth"
-
-  # УВАЖНО: більшість версій провайдера САМІ base64-енкодять значення у data.
-  # Тому тут передаємо СИРИЙ текст ключа, без base64encode().
-  data = {
-    "ssh-privatekey" = var.gitops_ssh_private_key
-  }
-}
-
-
-
-# -----------------------------
+############################
 # Outputs
-# -----------------------------
+############################
 output "jenkins_release_name" {
   value = helm_release.jenkins.name
 }
