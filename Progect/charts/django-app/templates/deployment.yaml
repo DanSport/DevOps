@@ -1,59 +1,51 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-django-app
+  name: {{ include "django-app.fullname" . }}
   labels:
-    app: django-app
-    release: {{ .Release.Name }}
+    {{- include "django-app.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount | default 2 }}
   selector:
     matchLabels:
-      app: django-app
-      release: {{ .Release.Name }}
-  strategy:
-    type: {{ default "RollingUpdate" .Values.strategy.type }}
-    rollingUpdate:
-      maxUnavailable: {{ default 0 .Values.strategy.maxUnavailable }}
-      maxSurge: {{ default 1 .Values.strategy.maxSurge }}
+      app: {{ include "django-app.name" . }}
   template:
     metadata:
       labels:
-        app: django-app
-        release: {{ .Release.Name }}
+        app: {{ include "django-app.name" . }}
+        {{- include "django-app.labels" . | nindent 8 }}
     spec:
-      {{- if .Values.serviceAccountName }}
-      serviceAccountName: {{ .Values.serviceAccountName }}
-      {{- end }}
-
-      {{- if or (.Values.init.waitForDb) (.Values.init.migrate) }}
+      # ------------ init ------------
       initContainers:
-        {{- if .Values.init.waitForDb }}
         - name: wait-for-db
           image: {{ .Values.init.waitForDbImage | default "postgres:15" }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ include "django-app.fullname" . }}-config
           command:
             - sh
-            - -c
-            - >
-              until pg_isready -h {{ .Values.init.dbHost | default "postgres.default.svc.cluster.local" }}
-              -p {{ .Values.init.dbPort | default 5432 }} -t 2;
-              do echo "waiting for db"; sleep 2; done
-        {{- end }}
-        {{- if .Values.init.migrate }}
+            - -lc
+            - |
+              until pg_isready -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-appuser}"; do
+                echo "waiting for db"
+                sleep 2
+              done
+
         - name: migrate
-          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
           workingDir: /app/django_app
-          command: ['sh','-lc','python manage.py migrate --noinput']
           envFrom:
             - configMapRef:
                 name: {{ include "django-app.fullname" . }}-config
             - secretRef:
                 name: {{ .Values.database.secretName | default "django-db-secret" }}
-        {{- end }}
-      {{- end }}
+          command: ["/venv/bin/python","manage.py","migrate","--noinput"]
 
+      # ------------ app ------------
       containers:
-        - name: django-app
+        - name: {{ include "django-app.name" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
           workingDir: /app/django_app
@@ -65,6 +57,7 @@ spec:
                 name: {{ include "django-app.fullname" . }}-config
             - secretRef:
                 name: {{ .Values.database.secretName | default "django-db-secret" }}
+
           readinessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
@@ -73,6 +66,7 @@ spec:
             periodSeconds: {{ .Values.health.readinessPeriod | default 5 }}
             timeoutSeconds: {{ .Values.health.readinessTimeout | default 1 }}
             failureThreshold: {{ .Values.health.readinessFailures | default 3 }}
+
           livenessProbe:
             httpGet:
               path: {{ .Values.health.path | default "/admin/login/" }}
@@ -81,5 +75,6 @@ spec:
             periodSeconds: {{ .Values.health.livenessPeriod | default 10 }}
             timeoutSeconds: {{ .Values.health.livenessTimeout | default 1 }}
             failureThreshold: {{ .Values.health.livenessFailures | default 3 }}
+
           resources:
             {{- toYaml (.Values.resources | default dict) | nindent 12 }}

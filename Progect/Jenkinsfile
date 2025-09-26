@@ -24,6 +24,17 @@ spec:
         requests: { cpu: "50m",  memory: "64Mi" }
         limits:   { cpu: "500m", memory: "256Mi" }
 
+    - name: aws
+      image: amazon/aws-cli:2.17.48
+      command: ["cat"]
+      tty: true
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+      resources:
+        requests: { cpu: "50m", memory: "64Mi" }
+        limits:   { cpu: "500m", memory: "256Mi" }
+
     - name: kaniko
       image: gcr.io/kaniko-project/executor:debug
       command: ["cat"]
@@ -37,7 +48,7 @@ spec:
 
     - name: jnlp
       image: jenkins/inbound-agent:3327.v868139a_d00e0-6
-      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+      args: ['$(JENKINS_SECRET)', '$(JENKINS_NAME)']
       env:
         - name: JENKINS_URL
           value: "http://jenkins.jenkins.svc.cluster.local:80/"
@@ -57,7 +68,7 @@ spec:
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'   // пушимо в main (важливо для завдання)
+    GITOPS_BRANCH = 'main'   // за потреби поміняй на 'lesson-8-9'
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
@@ -75,6 +86,33 @@ git rev-parse --short HEAD || true
       }
     }
 
+    stage('ECR Login (docker config)') {
+      steps {
+        container('aws') {
+          sh '''#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$HOME/.docker"
+
+# Витягуємо реєстр з ECR_URI (частина до першого '/')
+ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
+
+# Отримуємо пароль і формуємо docker config для Kaniko
+TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
+cat > "$HOME/.docker/config.json" <<JSON
+{
+  "auths": {
+    "${ECR_REGISTRY}": {
+      "username": "AWS",
+      "password": "${TOKEN}"
+    }
+  }
+}
+JSON
+'''
+        }
+      }
+    }
+
     stage('Build & Push (Kaniko)') {
       steps {
         container('kaniko') {
@@ -84,6 +122,7 @@ TAG="build-${BUILD_NUMBER}"
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
+  --docker-config="$HOME/.docker/" \
   --cache=false
 echo "${TAG}" > .image_tag
 '''
@@ -98,17 +137,14 @@ echo "${TAG}" > .image_tag
             sh '''#!/usr/bin/env bash
 set -euo pipefail
 
-# дістаємо тег з попередньої стадії
 TAG="$(cat .image_tag)"
 [ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
 
-# known_hosts (на випадок, якщо глобально не сконфігурено)
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 chmod 600 ~/.ssh/known_hosts
 
-# працюємо в окремій копії гілки main, щоб не чіпати робочий workspace
 workdir="$(mktemp -d)"
 git clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
 cd "$workdir/repo"
@@ -116,7 +152,7 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# оновлюємо тільки рядок з tag: у потрібному values.yaml
+# Акуратно міняємо лише значення tag: у потрібному values.yaml
 sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
 
 git add "${VALUES_FILE}" || true
@@ -130,7 +166,7 @@ git push origin "${GITOPS_BRANCH}"
   }
 
   post {
-    success { echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD сам підхопить зміни.' }
-    failure { echo '❌ Дивись логи конкретної стадії (Kaniko / Push у Git).' }
+    success { echo '✅ Образ у ECR запушено і bump у гілці виконано. Argo CD підхопить коміт.' }
+    failure { echo '❌ Дивись логи стадій (ECR login / Kaniko / Push у Git).' }
   }
 }
