@@ -3,7 +3,7 @@
 ############################
 locals {
   jcas_configscripts = {
-    git_host_key = <<-YAML
+    git-host-key = <<-YAML
       unclassified:
         gitHostKeyVerificationConfiguration:
           sshHostKeyVerificationStrategy: "acceptFirstConnectionStrategy"
@@ -20,7 +20,7 @@ locals {
                     git {
                       remote('git@github.com:DanSport/DevOps.git')
                       credentials('gitops-ssh')
-                      branch('*/lesson-8-9')  // або main, якщо ArgoCD дивиться на main
+                      branch('*/lesson-8-9')
                     }
                   }
                   scriptPath('Progect/Jenkinsfile')
@@ -146,7 +146,7 @@ resource "kubernetes_secret" "gitops_ssh" {
 }
 
 ############################
-# Jenkins via Helm (JCasC увімкнено + потрібні плагіни)
+# Jenkins via Helm (JCasC увімкнено + потрібні плагіни + ресурси/проби)
 ############################
 resource "helm_release" "jenkins" {
   name       = var.release_name
@@ -180,13 +180,39 @@ resource "helm_release" "jenkins" {
           size         = coalesce(var.storage_size, "10Gi")
         }
 
-        # JCasC: автоконфіг Jenkins (host key strategy + job DSL)
+        # Ресурси/опції JVM та проби — стабільний перший старт
+        resources = {
+          requests = { cpu = "500m", memory = "1Gi" }
+          limits   = { cpu = "2",    memory = "2Gi" }
+        }
+        javaOpts = "-Djenkins.install.runSetupWizard=false -Xms512m -Xmx1024m"
+
+        startupProbe = {
+          httpGet = { path = "/login", port = "http" }
+          failureThreshold = 60
+          periodSeconds    = 5
+          timeoutSeconds   = 1
+        }
+        livenessProbe = {
+          httpGet = { path = "/login", port = "http" }
+          initialDelaySeconds = 120
+          periodSeconds       = 10
+          failureThreshold    = 12
+        }
+        readinessProbe = {
+          httpGet = { path = "/login", port = "http" }
+          initialDelaySeconds = 60
+          periodSeconds       = 5
+          failureThreshold    = 12
+        }
+
+        # JCasC: автоконфіг (host key strategy + job DSL)
         JCasC = {
           enabled       = true
           configScripts = local.jcas_configscripts
         }
 
-        # Необхідні плагіни: Git, DSL, CasC, k8s credentials provider
+        # Плагіни: Git, DSL, CasC, k8s credentials provider
         installPlugins = [
           "workflow-aggregator",
           "git",
@@ -209,6 +235,7 @@ resource "helm_release" "jenkins" {
   ]
 
   depends_on = [
+    kubernetes_namespace.ns,
     kubernetes_service_account.sa,
     kubernetes_secret.gitops_ssh
   ]
