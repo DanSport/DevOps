@@ -301,4 +301,9 @@ terraform destroy -auto-approve
 - Окремі **IRSA-ролі** для аддонів (EBS CSI із власним policy).
 - Замість `tag` фіксувати `image.digest` у GitOps (детерміновані деплоя).
 
+
 ![alt text](image.png)
+<img width="1737" height="619" alt="image" src="https://github.com/user-attachments/assets/c1581540-a238-4932-a28a-23baf3a48308" />
+
+<img width="1772" height="568" alt="image" src="https://github.com/user-attachments/assets/efd36371-5f04-4822-bc2f-f8208bf5b163" />
+
