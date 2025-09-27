@@ -64,17 +64,11 @@ spec:
     }
   }
 
-  // ці options безпечні на будь-якій версії через wrap()
-  options {
-    wrap([$class: 'AnsiColorBuildWrapper', 'colorMapName': 'xterm'])
-    wrap([$class: 'TimestamperBuildWrapper'])
-  }
-
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'  // згідно вимоги — бамп у main
+    GITOPS_BRANCH = 'main'  // згідно умови — бамп у main
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
     DOCKER_CFG    = '/home/jenkins/agent/.docker' // спільна для aws+kaniko
@@ -83,20 +77,26 @@ spec:
   stages {
     stage('Checkout') {
       steps {
-        checkout scm
-        sh '''#!/usr/bin/env bash
+        timestamps {
+          ansiColor('xterm') {
+            checkout scm
+            sh '''#!/usr/bin/env bash
 set -euo pipefail
 git --version
 git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
 '''
+          }
+        }
       }
     }
 
     stage('ECR Login (docker config)') {
       steps {
-        container('aws') {
-          sh '''#!/usr/bin/env bash
+        timestamps {
+          ansiColor('xterm') {
+            container('aws') {
+              sh '''#!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "${DOCKER_CFG}"
 # Реєстр — частина до першого '/'
@@ -116,14 +116,18 @@ cat > "${DOCKER_CFG}/config.json" <<JSON
 JSON
 chmod 600 "${DOCKER_CFG}/config.json"
 '''
+            }
+          }
         }
       }
     }
 
     stage('Build & Push (Kaniko)') {
       steps {
-        container('kaniko') {
-          sh '''#!/bin/sh -eux
+        timestamps {
+          ansiColor('xterm') {
+            container('kaniko') {
+              sh '''#!/bin/sh -eux
 TAG="build-${BUILD_NUMBER}"
 /kaniko/executor \
   --context="$WORKSPACE" \
@@ -133,15 +137,19 @@ TAG="build-${BUILD_NUMBER}"
   --cache=false
 echo "${TAG}" > .image_tag
 '''
+            }
+          }
         }
       }
     }
 
     stage('Bump Helm values & Push') {
       steps {
-        container('git-tools') {
-          sshagent(credentials: ['gitops-ssh']) {
-            sh '''#!/usr/bin/env bash
+        timestamps {
+          ansiColor('xterm') {
+            container('git-tools') {
+              sshagent(credentials: ['gitops-ssh']) {
+                sh '''#!/usr/bin/env bash
 set -euo pipefail
 
 TAG="$(cat .image_tag)"
@@ -171,6 +179,8 @@ git add "${VALUES_FILE}" || true
 git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]" || { echo "No changes to commit"; exit 0; }
 git push origin "${GITOPS_BRANCH}"
 '''
+              }
+            }
           }
         }
       }
