@@ -2,28 +2,7 @@
 # JCasC scripts (host key + job DSL)
 ############################
 locals {
-  jcas_configscripts = {
-    jobs = <<-YAML
-      jobs:
-        - script: >
-            pipelineJob('django-app-ci') {
-              description('CI/CD for Django app: build & push to ECR, bump Helm values, push to repo')
-              definition {
-                cpsScm {
-                  scm {
-                    git {
-                      remote('https://github.com/DanSport/DevOps.git')   // checkout по HTTPS можемо поставити нижче, якщо треба
-                      credentials('gitops-ssh')
-                      branch('*/lesson-8-9')
-                    }
-                  }
-                  scriptPath('Progect/Jenkinsfile')
-                }
-              }
-              triggers { scm('H/2 * * * *') }
-            }
-    YAML
-  }
+  jcas_configscripts = {}
 }
 
 ############################
@@ -203,7 +182,7 @@ resource "helm_release" "jenkins" {
         # JCasC: автоконфіг (host key strategy + job DSL)
         JCasC = {
           enabled       = true
-          configScripts = local.jcas_configscripts
+          
         }
 
         # Плагіни: Git, DSL, CasC, k8s credentials provider

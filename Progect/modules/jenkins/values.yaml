@@ -1,4 +1,9 @@
 controller:
+  image:
+    registry: docker.io
+    repository: jenkins/jenkins
+    tag: lts-jdk21
+    
   admin:
     createSecret: true
     username: admin
@@ -36,20 +41,21 @@ controller:
     - ssh-credentials
     - workflow-aggregator
 
+  # даємо Дженкінсу час на перший старт
   startupProbe:
     httpGet:
       path: /login
       port: http
-    initialDelaySeconds: 60
+    initialDelaySeconds: 90
     periodSeconds: 10
     timeoutSeconds: 5
-    failureThreshold: 30   # ~5 хв на старт
+    failureThreshold: 90   # ~15 хв максимум
 
   livenessProbe:
     httpGet:
       path: /login
       port: http
-    initialDelaySeconds: 180
+    initialDelaySeconds: 900
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 5
@@ -58,10 +64,10 @@ controller:
     httpGet:
       path: /login
       port: http
-    initialDelaySeconds: 120
+    initialDelaySeconds: 300
     periodSeconds: 10
     timeoutSeconds: 5
-    failureThreshold: 3
+    failureThreshold: 6
 
   containerEnv:
     - name: GITOPS_SSH_PRIVATE_KEY
@@ -100,7 +106,7 @@ controller:
                           url('git@github.com:DanSport/DevOps.git')
                           credentials('gitops-ssh')
                         }
-                        branches('*/lesson-8-9')
+                        branches('*/lesson-8-9')   // код беремо з lesson-8-9
                       }
                     }
                     scriptPath('Progect/Jenkinsfile')
@@ -108,6 +114,7 @@ controller:
                 }
                 triggers { scm('H/2 * * * *') }
               }
+
 rbac:
   create: true
 
@@ -115,7 +122,3 @@ serviceAccount:
   create: false
   name: jenkins-sa
 
-persistence:
-  enabled: true
-  storageClass: gp3
-  size: 10Gi
