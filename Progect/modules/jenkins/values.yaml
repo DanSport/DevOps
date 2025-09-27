@@ -3,7 +3,7 @@ controller:
     registry: docker.io
     repository: jenkins/jenkins
     tag: lts-jdk21
-    
+
   admin:
     createSecret: true
     username: admin
@@ -40,6 +40,7 @@ controller:
     - git-client
     - ssh-credentials
     - workflow-aggregator
+    - ssh-agent
 
   # даємо Дженкінсу час на перший старт
   startupProbe:
@@ -95,6 +96,9 @@ controller:
       pipelines: |
         jobs:
           - script: >
+              pipelines: |
+        jobs:
+          - script: >
               pipelineJob('django-app-ci') {
                 description('CI/CD for Django app: build & push image to ECR, bump Helm values, push to repo')
                 definition {
@@ -103,10 +107,9 @@ controller:
                     scm {
                       git {
                         remote {
-                          url('git@github.com:DanSport/DevOps.git')
-                          credentials('gitops-ssh')
+                          url('https://github.com/DanSport/DevOps.git')   // ← HTTPS!
                         }
-                        branches('*/lesson-8-9')   // код беремо з lesson-8-9
+                        branches('*/lesson-8-9')
                       }
                     }
                     scriptPath('Progect/Jenkinsfile')
@@ -114,11 +117,17 @@ controller:
                 }
                 triggers { scm('H/2 * * * *') }
               }
-
+              
 rbac:
   create: true
 
 serviceAccount:
   create: false
   name: jenkins-sa
+
+git-host-key-verification: |
+  unclassified:
+    gitHostKeyVerificationConfiguration:
+      sshHostKeyVerificationStrategy: "Accept first connection"
+
 
