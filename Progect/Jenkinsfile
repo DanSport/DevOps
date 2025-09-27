@@ -1,7 +1,7 @@
 pipeline {
   agent {
     kubernetes {
-      yaml """
+      yaml '''
 apiVersion: v1
 kind: Pod
 metadata:
@@ -59,18 +59,24 @@ spec:
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
-"""
+'''
       defaultContainer 'git-tools'
     }
+  }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
   }
 
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'   // за потреби поміняй на 'lesson-8-9'
+    GITOPS_BRANCH = 'main'  // згідно з умовою — бамп у main
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
+    DOCKER_CFG    = '/home/jenkins/agent/.docker'       // спільна для aws+kaniko
   }
 
   stages {
@@ -91,14 +97,13 @@ git rev-parse --short HEAD || true
         container('aws') {
           sh '''#!/usr/bin/env bash
 set -euo pipefail
-mkdir -p "$HOME/.docker"
-
-# Витягуємо реєстр з ECR_URI (частина до першого '/')
+mkdir -p "${DOCKER_CFG}"
+# Реєстр — частина до першого '/'
 ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
-
-# Отримуємо пароль і формуємо docker config для Kaniko
+# Токен логіну
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
-cat > "$HOME/.docker/config.json" <<JSON
+# Готуємо config.json у спільній теці
+cat > "${DOCKER_CFG}/config.json" <<JSON
 {
   "auths": {
     "${ECR_REGISTRY}": {
@@ -108,6 +113,7 @@ cat > "$HOME/.docker/config.json" <<JSON
   }
 }
 JSON
+chmod 600 "${DOCKER_CFG}/config.json"
 '''
         }
       }
@@ -122,7 +128,7 @@ TAG="build-${BUILD_NUMBER}"
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
-  --docker-config="$HOME/.docker/" \
+  --docker-config="${DOCKER_CFG}" \
   --cache=false
 echo "${TAG}" > .image_tag
 '''
@@ -140,6 +146,7 @@ set -euo pipefail
 TAG="$(cat .image_tag)"
 [ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
 
+# known_hosts для SSH
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
@@ -153,7 +160,11 @@ git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
 # Акуратно міняємо лише значення tag: у потрібному values.yaml
-sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
+if command -v yq >/dev/null 2>&1; then
+  IMAGE_TAG="${TAG}" yq -i '.image.tag = env(IMAGE_TAG)' "${VALUES_FILE}" || true
+else
+  sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
+fi
 
 git add "${VALUES_FILE}" || true
 git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]" || { echo "No changes to commit"; exit 0; }
@@ -166,7 +177,11 @@ git push origin "${GITOPS_BRANCH}"
   }
 
   post {
-    success { echo '✅ Образ у ECR запушено і bump у гілці виконано. Argo CD підхопить коміт.' }
-    failure { echo '❌ Дивись логи стадій (ECR login / Kaniko / Push у Git).' }
+    success {
+      echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD підхопить коміт.'
+    }
+    failure {
+      echo '❌ Дивись логи стадій (ECR login / Kaniko / Push у Git).'
+    }
   }
 }
