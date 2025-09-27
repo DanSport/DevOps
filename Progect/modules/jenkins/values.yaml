@@ -93,10 +93,12 @@ controller:
                         directEntry:
                           privateKey: "${GITOPS_SSH_PRIVATE_KEY}"
 
+      git-host-key-verification: |
+        unclassified:
+          gitHostKeyVerificationConfiguration:
+            sshHostKeyVerificationStrategy: "Accept first connection"
+
       pipelines: |
-        jobs:
-          - script: >
-              pipelines: |
         jobs:
           - script: >
               pipelineJob('django-app-ci') {
@@ -107,9 +109,9 @@ controller:
                     scm {
                       git {
                         remote {
-                          url('https://github.com/DanSport/DevOps.git')   // ← HTTPS!
+                          url('https://github.com/DanSport/DevOps.git')   // checkout по HTTPS
                         }
-                        branches('*/lesson-8-9')
+                        branches('*/lesson-8-9')                           // код з lesson-8-9
                       }
                     }
                     scriptPath('Progect/Jenkinsfile')
@@ -117,7 +119,7 @@ controller:
                 }
                 triggers { scm('H/2 * * * *') }
               }
-              
+
 rbac:
   create: true
 
