@@ -146,39 +146,47 @@ echo "${TAG}" > .image_tag
     }
 
     stage('Bump Helm values & Push') {
-      steps {
-        container('git-tools') {
-          sshagent(credentials: ['gitops-ssh']) {
-            sh '''#!/usr/bin/env bash
+  steps {
+    container('git-tools') {
+      withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
+                                        keyFileVariable: 'SSH_KEY',
+                                        usernameVariable: 'SSH_USER')]) {
+        sh '''#!/usr/bin/env bash
 set -euo pipefail
 
 TAG="$(cat .image_tag)"
-[ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
+[ -n "$TAG" ] || { echo "TAG is empty"; exit 1; }
 
+# known_hosts + права
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-chmod 600 ~/.ssh/known_hosts
+chmod 644 ~/.ssh/known_hosts
 
+# Клонуємо гілку GitOps через SSH, одразу задаючи ssh-команду з ключем
 workdir="$(mktemp -d)"
-git clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
-cd "$workdir/repo"
+git -c core.sshCommand="ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
+  clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
 
+cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# міняємо тільки рядок з "tag:"
+# Акуратно міняємо лише значення tag: у потрібному values.yaml
 sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
 
+# Комітимо, якщо є зміни, і пушимо тією ж ssh-командою
 git add "${VALUES_FILE}" || true
-git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]" || { echo "No changes to commit"; exit 0; }
-git push origin "${GITOPS_BRANCH}"
+git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]"
+
+GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
+  git push origin "${GITOPS_BRANCH}"
 '''
-          }
-        }
       }
     }
   }
+}
 
   post {
     success { echo '✅ Образ у ECR запушено і bump у репозиторії виконано. Argo CD підхопить коміт.' }
