@@ -64,12 +64,16 @@ spec:
     }
   }
 
+  options {
+    // щоб не було дублю "Declarative: Checkout SCM"
+    skipDefaultCheckout(true)
+  }
+
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    // ❗Згідно вимоги — змінюємо тег в іншій гілці:
-    GITOPS_BRANCH = 'main'      // за потреби поміняй на 'lesson-8-9'
+    GITOPS_BRANCH = 'main'         // або 'lesson-8-9' якщо треба
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
@@ -77,13 +81,18 @@ spec:
   stages {
     stage('Checkout') {
       steps {
-        checkout scm
-        sh '''#!/usr/bin/env bash
+        container('git-tools') {
+          checkout([$class: 'GitSCM',
+            branches: [[name: '*/lesson-8-9']],
+            userRemoteConfigs: [[url: 'https://github.com/DanSport/DevOps.git']]
+          ])
+          sh '''#!/usr/bin/env bash
 set -euo pipefail
 git --version
 git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
 '''
+        }
       }
     }
 
@@ -92,16 +101,18 @@ git rev-parse --short HEAD || true
         container('aws') {
           sh '''#!/usr/bin/env bash
 set -euo pipefail
-DOCKER_CFG="/home/jenkins/agent/.docker"
-mkdir -p "$DOCKER_CFG"
+mkdir -p "$HOME/.docker"
 
 ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
 
-cat > "$DOCKER_CFG/config.json" <<JSON
+cat > "$HOME/.docker/config.json" <<JSON
 {
   "auths": {
-    "${ECR_REGISTRY}": { "username": "AWS", "password": "${TOKEN}" }
+    "${ECR_REGISTRY}": {
+      "username": "AWS",
+      "password": "${TOKEN}"
+    }
   }
 }
 JSON
@@ -115,12 +126,19 @@ JSON
         container('kaniko') {
           sh '''#!/bin/sh -eux
 TAG="build-${BUILD_NUMBER}"
+
+# === FIX: зробити креденшли видимими для kaniko ===
+mkdir -p /kaniko/.docker
+if [ -f "$HOME/.docker/config.json" ]; then
+  cp "$HOME/.docker/config.json" /kaniko/.docker/config.json
+fi
+
 /kaniko/executor \
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
-  --docker-config="/home/jenkins/agent/.docker" \
   --cache=false
+
 echo "${TAG}" > .image_tag
 '''
         }
@@ -130,8 +148,7 @@ echo "${TAG}" > .image_tag
     stage('Bump Helm values & Push') {
       steps {
         container('git-tools') {
-          withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
-                                            keyFileVariable: 'GIT_KEY')]) {
+          sshagent(credentials: ['gitops-ssh']) {
             sh '''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -140,12 +157,8 @@ TAG="$(cat .image_tag)"
 
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-# вписуємо коректні ключі хосту GitHub
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 chmod 600 ~/.ssh/known_hosts
-
-# використовуємо приватний ключ з credentials
-export GIT_SSH_COMMAND="ssh -i ${GIT_KEY} -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts"
 
 workdir="$(mktemp -d)"
 git clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
@@ -154,7 +167,7 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# оновлюємо ТІЛЬКИ значення tag: у вказаному values.yaml
+# міняємо тільки рядок з "tag:"
 sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
 
 git add "${VALUES_FILE}" || true
@@ -168,7 +181,7 @@ git push origin "${GITOPS_BRANCH}"
   }
 
   post {
-    success { echo '✅ Образ у ECR запушено і тег у Git оновлено. Argo CD підхопить коміт.' }
+    success { echo '✅ Образ у ECR запушено і bump у репозиторії виконано. Argo CD підхопить коміт.' }
     failure { echo '❌ Дивись логи стадій (Checkout / ECR login / Kaniko / Push у Git).' }
   }
 }
