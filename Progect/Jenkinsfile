@@ -74,7 +74,7 @@ spec:
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'lesson-8-9'
+    GITOPS_BRANCH = 'main'
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
