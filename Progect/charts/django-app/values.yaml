@@ -55,7 +55,3 @@ strategy:
   
 init: {}
 envFrom: {}
-strategy:
-  type: RollingUpdate
-  maxUnavailable: 0
-  maxSurge: 1
