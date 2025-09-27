@@ -65,7 +65,7 @@ spec:
   }
 
   options {
-    // вимикаємо авто-"Declarative: Checkout SCM", щоб спочатку додати known_hosts
+    // забираємо авточек-аут SCM, щоб не чіплявся Git plugin зі своєю перевіркою ключа
     skipDefaultCheckout(true)
   }
 
@@ -73,31 +73,41 @@ spec:
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'  // за умовою — бамп у main
+    GITOPS_BRANCH = 'main'  // згідно вимоги — бамп у main
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
     DOCKER_CFG    = '/home/jenkins/agent/.docker' // спільна для aws+kaniko
+    SOURCE_BRANCH = 'lesson-8-9'
   }
 
   stages {
 
     stage('Checkout') {
       steps {
-        // додаємо ключ хоста GitHub і тільки потім робимо checkout
-        sh '''#!/bin/sh
+        container('git-tools') {
+          sshagent(credentials: ['gitops-ssh']) {
+            sh '''#!/bin/sh
 set -eu
+# known_hosts для GitHub
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
 chmod 600 "$HOME/.ssh/known_hosts"
-git --version || true
-git config --global --add safe.directory "$WORKSPACE" || true
-'''
-        checkout scm
-        sh '''#!/bin/sh
-set -eu
+
+# Якщо вже є .git — оновимо, інакше чистий clone у $WORKSPACE
+if [ -d .git ]; then
+  git remote set-url origin "${GIT_SSH_URL}"
+  git fetch origin "${SOURCE_BRANCH}"
+  git checkout -B "${SOURCE_BRANCH}" "origin/${SOURCE_BRANCH}"
+else
+  git clone --depth 1 --branch "${SOURCE_BRANCH}" "${GIT_SSH_URL}" .
+fi
+
+git submodule update --init --recursive || true
 git rev-parse --short HEAD || true
 '''
+          }
+        }
       }
     }
 
@@ -153,7 +163,7 @@ set -eu
 TAG="$(cat .image_tag)"
 [ -n "${TAG}" ]
 
-# на випадок, якщо інший контейнер
+# known_hosts (на випадок іншого контейнера)
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
@@ -166,12 +176,10 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# Міняємо лише значення tag: у values.yaml
-# якщо є yq — використай його, інакше sed
+# Оновити тільки image.tag у потрібному values.yaml
 if command -v yq >/dev/null 2>&1; then
   IMAGE_TAG="${TAG}" yq -i '.image.tag = env(IMAGE_TAG)' "${VALUES_FILE}" || true
 else
-  # GNU/BusyBox sed з -E підтримується; екрануємо backref
   sed -E -i "s|(^[[:space:]]*tag:[[:space:]]*).*$|\\1${TAG}|" "${VALUES_FILE}"
 fi
 
@@ -187,6 +195,6 @@ git push origin "${GITOPS_BRANCH}"
 
   post {
     success { echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD підхопить коміт.' }
-    failure { echo '❌ Дивись логи стадій (ECR login / Kaniko / Push у Git).' }
+    failure { echo '❌ Дивись логи стадій (Checkout / ECR login / Kaniko / Push у Git).' }
   }
 }
