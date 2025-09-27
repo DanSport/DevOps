@@ -64,6 +64,11 @@ spec:
     }
   }
 
+  options {
+    // вимикаємо авто-стадію "Declarative: Checkout SCM"
+    skipDefaultCheckout(true)
+  }
+
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
@@ -79,11 +84,21 @@ spec:
       steps {
         timestamps {
           ansiColor('xterm') {
-            checkout scm
+            // додамо ключ хоста GitHub перед checkout
             sh '''#!/usr/bin/env bash
 set -euo pipefail
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts
+chmod 600 ~/.ssh/known_hosts
 git --version
 git config --global --add safe.directory "$WORKSPACE" || true
+'''
+            // використовує визначений у job SCM (git@… + credentials gitops-ssh)
+            checkout scm
+
+            sh '''#!/usr/bin/env bash
+set -euo pipefail
 git rev-parse --short HEAD || true
 '''
           }
@@ -99,11 +114,8 @@ git rev-parse --short HEAD || true
               sh '''#!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "${DOCKER_CFG}"
-# Реєстр — частина до першого '/'
 ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
-# Токен логіну
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
-# Готуємо config.json у спільній теці
 cat > "${DOCKER_CFG}/config.json" <<JSON
 {
   "auths": {
@@ -155,10 +167,10 @@ set -euo pipefail
 TAG="$(cat .image_tag)"
 [ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
 
-# known_hosts для SSH
+# known_hosts (на випадок, якщо інший контейнер)
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts
 chmod 600 ~/.ssh/known_hosts
 
 workdir="$(mktemp -d)"
@@ -168,7 +180,6 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# Акуратно міняємо лише значення tag: у потрібному values.yaml
 if command -v yq >/dev/null 2>&1; then
   IMAGE_TAG="${TAG}" yq -i '.image.tag = env(IMAGE_TAG)' "${VALUES_FILE}" || true
 else
@@ -188,11 +199,7 @@ git push origin "${GITOPS_BRANCH}"
   }
 
   post {
-    success {
-      echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD підхопить коміт.'
-    }
-    failure {
-      echo '❌ Дивись логи стадій (ECR login / Kaniko / Push у Git).'
-    }
+    success { echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD підхопить коміт.' }
+    failure { echo '❌ Дивись логи стадій (ECR login / Kaniko / Push у Git).' }
   }
 }
