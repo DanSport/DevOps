@@ -1,19 +1,22 @@
-# Lesson 8-9 — AWS EKS + ECR + Helm + Django + HPA + GitOps (Argo CD)
+# Lesson 8–9 — AWS EKS + ECR + Helm + Django + HPA + GitOps (Argo CD)
 
 Production-friendly демо інфраструктури:
 - **Terraform** розгортає **VPC + EKS + ECR + Argo CD + Jenkins**.
-- **Jenkins (Kaniko + IRSA)** збирає образ, пушить у **ECR** і оновлює тег у **Helm values** GitOps-репозиторію.
-- **Argo CD** підхоплює зміни з Git і синхронізує застосунок у кластері.
+- **Jenkins (Kaniko + IRSA)** збирає образ, пушить у **ECR** і **оновлює `image.tag` у `Progect/charts/django-app/values.yaml` гілки `main`**.
+- **Argo CD** підхоплює коміт із `main` і синхронізує застосунок у кластері.
 - **HPA** масштабує `Deployment` за метриками.
+
+> **Поточний стан:** застосунок деплоїться в **namespace `default`** (реліз Helm: `django-app`, Deployment: `django-app-django-app`).  
+> **EKS:** `lesson-7-eks` • **ECR:** `lesson-7-ecr` • **GitOps-branch:** `main`.
 
 ---
 
 ## 0) Передумови
 
 - AWS акаунт із правами на EKS/ECR/VPC/IRSA.
-- Встановлено: `terraform` ≥ 1.5, `kubectl`, `awscli`, `helm` (опц. `yq`).
-- Налаштований `aws configure` (або профіль з потрібними правами).
-- Docker потрібен лише для ручних перевірок локального білду.
+- Встановлено локально: `terraform` ≥ 1.5, `kubectl`, `awscli`, `helm` (опц. `yq`).
+- Налаштований `aws configure` або окремий профіль.
+- Docker потрібен лише для локальних перевірок (Kaniko у CI працює без Docker).
 
 ---
 
@@ -84,24 +87,28 @@ Progect/
 │       ├── Chart.yaml
 │       └── values.yaml     # ConfigMap зі змінними середовища
 
-## 2) Швидкий старт
+## 2) Розгортання інфраструктури (Terraform)
 
 ```bash
+cd Progect
+
+# Ініціалізація
 terraform init
 
-terraform apply -auto-approve   -var="aws_region=us-east-1"   -var="ecr_name=lesson-7-ecr"   -var="eks_cluster_name=lesson-7-eks"   -var="eks_version=1.29"
-```
+# Старт. За потреби підкоригуйте значення змінних.
+terraform apply -auto-approve \
+  -var="aws_region=us-east-1" \
+  -var="ecr_name=lesson-7-ecr" \
+  -var="eks_cluster_name=lesson-7-eks" \
+  -var="eks_version=1.29"
 
-Очікувані outputs (серед іншого):
-- `ecr_repository_url`
-- `cluster_name`, `cluster_endpoint`, `cluster_oidc_issuer_url`
-- `vpc_id`
-- `argocd_namespace`, `argocd_server_dns`, `argocd_admin_password_hint`
-- `jenkins_release`, `jenkins_namespace`
+# Корисні вихідні дані
+terraform output
+terraform output -raw ecr_repository_url
+terraform output -raw cluster_name
+terraform output -raw argocd_namespace
+terraform output -raw jenkins_namespace
 
-> Використовується **IRSA** — ключі AWS у Secret **не потрібні**.
-
----
 
 ## 3) kubectl доступ до EKS
 
@@ -111,64 +118,78 @@ EKS_NAME=$(terraform output -raw cluster_name)
 
 aws eks --region "$AWS_REGION" update-kubeconfig --name "$EKS_NAME"
 
+kubectl config get-contexts
 kubectl cluster-info
 kubectl get nodes -o wide
 ```
 
 ---
 
-## 4) Як працює CI/CD
+## 4) CI/CD — перевірка (Jenkins → ECR → GitOps → Argo CD → K8s)
 
-1. **Jenkins** (agent із Kaniko) збирає Docker-образ з `Dockerfile`.
-2. Пушить образ у **ECR**: `${ECR_URI}:<branch>-<build#>` + `:latest`.
-3. Клонує **GitOps**-репозиторій і оновлює тег у `charts/django-app/values.yaml`.
-4. **Argo CD** бачить коміт, **автосинх** → новий імедж у кластері.
-5. **HPA** масштабує `Deployment` за метриками.
+```bash
+# Спільні змінні
+AWS_REGION=us-east-1
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REPO=lesson-7-ecr
+IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO"
 
-**Jenkinsfile** в корені репозиторію використовує:
-- podTemplate з JCasC (`label 'default'`),
-- `ECR_URI` як Jenkins Credentials (Secret text),
-- SSH-ключ `gitops-ssh` для пушу в GitOps-репозиторій.
+# 4.1. Який тег зараз у GitOps (гілка main)?
+TAG=$(curl -s https://raw.githubusercontent.com/DanSport/DevOps/main/Progect/charts/django-app/values.yaml \
+  | awk '/^[[:space:]]+tag:/ {print $2}')
+echo "GitOps tag: $TAG"
 
----
+# 4.2. Є такий тег в ECR?
+aws ecr describe-images --region "$AWS_REGION" --repository-name "$REPO" \
+  --query "imageDetails[?contains(imageTags, \`${TAG}\`)].imageTags" --output table
+
+# 4.3. Що деплоїться в кластері?
+kubectl -n default get deploy django-app-django-app \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+# 4.4. Перевірка відповідності тега GitOps vs Deployment
+DEPLOY_TAG=$(kubectl -n default get deploy django-app-django-app \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}' | awk -F: '{print $NF}')
+echo "Deploy tag: $DEPLOY_TAG"
+test "$TAG" = "$DEPLOY_TAG" && echo "✅ OK: теги збігаються" || echo "❌ MISMATCH: теги різні"
+
+# 4.5. Статус розкатки
+kubectl -n default rollout status deploy/django-app-django-app
 
 ## 5) Ручна збірка/публікація (не обов’язково)
 
-```bash
 AWS_REGION=us-east-1
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
 REPO=lesson-7-ecr
-IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO"
+IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO"
 
-aws ecr get-login-password --region $AWS_REGION |   docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+aws ecr get-login-password --region "$AWS_REGION" \
+ | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
 docker build -t django-app:local .
-docker tag django-app:local "$IMAGE:local"
-docker push "$IMAGE:local"
+docker tag django-app:local "$IMAGE_URI:local"
+docker push "$IMAGE_URI:local"
 
-aws ecr describe-images --region $AWS_REGION --repository-name "$REPO"   --query 'imageDetails[].imageTags' --output table
-```
+aws ecr describe-images --region "$AWS_REGION" --repository-name "$REPO" \
+  --query 'imageDetails[].imageTags' --output table
+
 
 ---
 
 ## 6) Локальне розгортання demo-чарта (за потреби)
 
-```bash
 AWS_REGION=us-east-1
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 IMAGE_REPO="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/lesson-7-ecr"
 
-helm upgrade --install django-app ./charts/django-app   --set image.repository="$IMAGE_REPO"   --set image.tag="local"   --set service.type=ClusterIP
+helm upgrade --install django-app ./charts/django-app \
+  --set image.repository="$IMAGE_REPO" \
+  --set image.tag="local" \
+  --set service.type=ClusterIP
 
 helm status django-app
-kubectl get deploy,svc,hpa,pods -l app.kubernetes.io/instance=django-app -o wide
-```
+kubectl -n default get deploy,svc,hpa,pods -l app.kubernetes.io/instance=django-app -o wide
 
-> Потрібен зовнішній доступ? Використай `--set service.type=LoadBalancer`.  
-> Не потрібен — повертай `ClusterIP`, щоб економити кошти.
-
----
 
 ## 7) HPA та Metrics Server
 
@@ -198,11 +219,19 @@ kubectl -n jenkins get secret jenkins -o jsonpath='{.data.jenkins-admin-password
 ```
 
 **Argo CD**
-```bash
-kubectl get svc -n argocd
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
-```
+# Стан компонентів
+kubectl -n argocd get pods
+kubectl -n argocd get applications
 
+# Веб-доступ (порт-форвардинг)
+kubectl -n argocd port-forward svc/argocd-server 8081:80
+
+# Пароль admin
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+
+Щоб деплоїти не в default, змініть у Application:
+spec.destination.namespace: django-app + аннотацію argocd.argoproj.io/sync-options: CreateNamespace=true.
 ---
 
 ## 9) Змінні та `terraform.tfvars`
