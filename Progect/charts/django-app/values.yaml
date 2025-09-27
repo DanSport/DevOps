@@ -1,6 +1,6 @@
 image:
   repository: 785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr
-  tag: build-17
+  tag: build-30
   pullPolicy: Always
 
 replicaCount: 2
