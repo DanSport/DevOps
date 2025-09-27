@@ -65,7 +65,7 @@ spec:
   }
 
   options {
-    // вимикаємо авто-стадію "Declarative: Checkout SCM"
+    // вимикаємо авто-"Declarative: Checkout SCM", щоб спочатку додати known_hosts
     skipDefaultCheckout(true)
   }
 
@@ -73,46 +73,39 @@ spec:
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'  // згідно умови — бамп у main
+    GITOPS_BRANCH = 'main'  // за умовою — бамп у main
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
     DOCKER_CFG    = '/home/jenkins/agent/.docker' // спільна для aws+kaniko
   }
 
   stages {
+
     stage('Checkout') {
       steps {
-        timestamps {
-          ansiColor('xterm') {
-            // додамо ключ хоста GitHub перед checkout
-            sh '''#!/usr/bin/env bash
-set -euo pipefail
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts
-chmod 600 ~/.ssh/known_hosts
-git --version
+        // додаємо ключ хоста GitHub і тільки потім робимо checkout
+        sh '''#!/bin/sh
+set -eu
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
+chmod 600 "$HOME/.ssh/known_hosts"
+git --version || true
 git config --global --add safe.directory "$WORKSPACE" || true
 '''
-            // використовує визначений у job SCM (git@… + credentials gitops-ssh)
-            checkout scm
-
-            sh '''#!/usr/bin/env bash
-set -euo pipefail
+        checkout scm
+        sh '''#!/bin/sh
+set -eu
 git rev-parse --short HEAD || true
 '''
-          }
-        }
       }
     }
 
     stage('ECR Login (docker config)') {
       steps {
-        timestamps {
-          ansiColor('xterm') {
-            container('aws') {
-              sh '''#!/usr/bin/env bash
-set -euo pipefail
+        container('aws') {
+          sh '''#!/bin/sh
+set -eu
 mkdir -p "${DOCKER_CFG}"
 ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
@@ -128,18 +121,15 @@ cat > "${DOCKER_CFG}/config.json" <<JSON
 JSON
 chmod 600 "${DOCKER_CFG}/config.json"
 '''
-            }
-          }
         }
       }
     }
 
     stage('Build & Push (Kaniko)') {
       steps {
-        timestamps {
-          ansiColor('xterm') {
-            container('kaniko') {
-              sh '''#!/bin/sh -eux
+        container('kaniko') {
+          sh '''#!/bin/sh
+set -eu
 TAG="build-${BUILD_NUMBER}"
 /kaniko/executor \
   --context="$WORKSPACE" \
@@ -149,29 +139,25 @@ TAG="build-${BUILD_NUMBER}"
   --cache=false
 echo "${TAG}" > .image_tag
 '''
-            }
-          }
         }
       }
     }
 
     stage('Bump Helm values & Push') {
       steps {
-        timestamps {
-          ansiColor('xterm') {
-            container('git-tools') {
-              sshagent(credentials: ['gitops-ssh']) {
-                sh '''#!/usr/bin/env bash
-set -euo pipefail
+        container('git-tools') {
+          sshagent(credentials: ['gitops-ssh']) {
+            sh '''#!/bin/sh
+set -eu
 
 TAG="$(cat .image_tag)"
-[ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
+[ -n "${TAG}" ]
 
-# known_hosts (на випадок, якщо інший контейнер)
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts
-chmod 600 ~/.ssh/known_hosts
+# на випадок, якщо інший контейнер
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
+chmod 600 "$HOME/.ssh/known_hosts"
 
 workdir="$(mktemp -d)"
 git clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
@@ -180,18 +166,19 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
+# Міняємо лише значення tag: у values.yaml
+# якщо є yq — використай його, інакше sed
 if command -v yq >/dev/null 2>&1; then
   IMAGE_TAG="${TAG}" yq -i '.image.tag = env(IMAGE_TAG)' "${VALUES_FILE}" || true
 else
-  sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
+  # GNU/BusyBox sed з -E підтримується; екрануємо backref
+  sed -E -i "s|(^[[:space:]]*tag:[[:space:]]*).*$|\\1${TAG}|" "${VALUES_FILE}"
 fi
 
 git add "${VALUES_FILE}" || true
 git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]" || { echo "No changes to commit"; exit 0; }
 git push origin "${GITOPS_BRANCH}"
 '''
-              }
-            }
           }
         }
       }
