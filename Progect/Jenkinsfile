@@ -1,7 +1,7 @@
 pipeline {
   agent {
     kubernetes {
-      yaml '''
+      yaml """
 apiVersion: v1
 kind: Pod
 metadata:
@@ -59,77 +59,52 @@ spec:
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
-'''
+"""
       defaultContainer 'git-tools'
     }
-  }
-
-  options {
-    // забираємо авточек-аут SCM, щоб не чіплявся Git plugin зі своєю перевіркою ключа
-    skipDefaultCheckout(true)
   }
 
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'  // згідно вимоги — бамп у main
+    // ❗Згідно вимоги — змінюємо тег в іншій гілці:
+    GITOPS_BRANCH = 'main'      // за потреби поміняй на 'lesson-8-9'
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
-    DOCKER_CFG    = '/home/jenkins/agent/.docker' // спільна для aws+kaniko
-    SOURCE_BRANCH = 'lesson-8-9'
   }
 
   stages {
-
     stage('Checkout') {
       steps {
-        container('git-tools') {
-          sshagent(credentials: ['gitops-ssh']) {
-            sh '''#!/bin/sh
-set -eu
-# known_hosts для GitHub
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
-chmod 600 "$HOME/.ssh/known_hosts"
-
-# Якщо вже є .git — оновимо, інакше чистий clone у $WORKSPACE
-if [ -d .git ]; then
-  git remote set-url origin "${GIT_SSH_URL}"
-  git fetch origin "${SOURCE_BRANCH}"
-  git checkout -B "${SOURCE_BRANCH}" "origin/${SOURCE_BRANCH}"
-else
-  git clone --depth 1 --branch "${SOURCE_BRANCH}" "${GIT_SSH_URL}" .
-fi
-
-git submodule update --init --recursive || true
+        checkout scm
+        sh '''#!/usr/bin/env bash
+set -euo pipefail
+git --version
+git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
 '''
-          }
-        }
       }
     }
 
     stage('ECR Login (docker config)') {
       steps {
         container('aws') {
-          sh '''#!/bin/sh
-set -eu
-mkdir -p "${DOCKER_CFG}"
+          sh '''#!/usr/bin/env bash
+set -euo pipefail
+DOCKER_CFG="/home/jenkins/agent/.docker"
+mkdir -p "$DOCKER_CFG"
+
 ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
-cat > "${DOCKER_CFG}/config.json" <<JSON
+
+cat > "$DOCKER_CFG/config.json" <<JSON
 {
   "auths": {
-    "${ECR_REGISTRY}": {
-      "username": "AWS",
-      "password": "${TOKEN}"
-    }
+    "${ECR_REGISTRY}": { "username": "AWS", "password": "${TOKEN}" }
   }
 }
 JSON
-chmod 600 "${DOCKER_CFG}/config.json"
 '''
         }
       }
@@ -138,14 +113,13 @@ chmod 600 "${DOCKER_CFG}/config.json"
     stage('Build & Push (Kaniko)') {
       steps {
         container('kaniko') {
-          sh '''#!/bin/sh
-set -eu
+          sh '''#!/bin/sh -eux
 TAG="build-${BUILD_NUMBER}"
 /kaniko/executor \
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
-  --docker-config="${DOCKER_CFG}" \
+  --docker-config="/home/jenkins/agent/.docker" \
   --cache=false
 echo "${TAG}" > .image_tag
 '''
@@ -156,18 +130,22 @@ echo "${TAG}" > .image_tag
     stage('Bump Helm values & Push') {
       steps {
         container('git-tools') {
-          sshagent(credentials: ['gitops-ssh']) {
-            sh '''#!/bin/sh
-set -eu
+          withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
+                                            keyFileVariable: 'GIT_KEY')]) {
+            sh '''#!/usr/bin/env bash
+set -euo pipefail
 
 TAG="$(cat .image_tag)"
-[ -n "${TAG}" ]
+[ -n "${TAG}" ] || { echo "TAG is empty"; exit 1; }
 
-# known_hosts (на випадок іншого контейнера)
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
-chmod 600 "$HOME/.ssh/known_hosts"
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+# вписуємо коректні ключі хосту GitHub
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts
+chmod 600 ~/.ssh/known_hosts
+
+# використовуємо приватний ключ з credentials
+export GIT_SSH_COMMAND="ssh -i ${GIT_KEY} -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts"
 
 workdir="$(mktemp -d)"
 git clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
@@ -176,12 +154,8 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# Оновити тільки image.tag у потрібному values.yaml
-if command -v yq >/dev/null 2>&1; then
-  IMAGE_TAG="${TAG}" yq -i '.image.tag = env(IMAGE_TAG)' "${VALUES_FILE}" || true
-else
-  sed -E -i "s|(^[[:space:]]*tag:[[:space:]]*).*$|\\1${TAG}|" "${VALUES_FILE}"
-fi
+# оновлюємо ТІЛЬКИ значення tag: у вказаному values.yaml
+sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
 
 git add "${VALUES_FILE}" || true
 git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]" || { echo "No changes to commit"; exit 0; }
@@ -194,7 +168,7 @@ git push origin "${GITOPS_BRANCH}"
   }
 
   post {
-    success { echo '✅ Образ у ECR запушено і bump у main виконано. Argo CD підхопить коміт.' }
+    success { echo '✅ Образ у ECR запушено і тег у Git оновлено. Argo CD підхопить коміт.' }
     failure { echo '❌ Дивись логи стадій (Checkout / ECR login / Kaniko / Push у Git).' }
   }
 }
