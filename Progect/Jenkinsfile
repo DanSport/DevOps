@@ -37,8 +37,9 @@ spec:
 
     - name: kaniko
       image: gcr.io/kaniko-project/executor:debug
-      command: ["cat"]
-      tty: true
+      # ВАЖЛИВО: тримаємо контейнер живим реальним шеллом BusyBox
+      command: ["/busybox/sh", "-c", "while true; do sleep 3600; done"]
+      tty: false
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
@@ -79,11 +80,11 @@ spec:
   }
 
   stages {
-    stage('Checkout') {
+    stage('Checkout (pipeline repo)') {
       steps {
         checkout scm
-        sh '''#!/usr/bin/env bash
-set -euo pipefail
+        sh '''
+set -eu
 git --version
 git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
@@ -91,15 +92,14 @@ git rev-parse --short HEAD || true
       }
     }
 
-    stage('ECR Login (docker config)') {
+    stage('ECR Login (create docker config)') {
       steps {
         container('aws') {
-          sh '''#!/usr/bin/env bash
-set -euo pipefail
-
+          sh '''
+set -eu
 mkdir -p "$WORKSPACE/.docker"
 
-ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
+ECR_REGISTRY="$(echo "$ECR_URI" | awk -F/ '{print $1}')"
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
 
 cat > "$WORKSPACE/.docker/config.json" <<JSON
@@ -112,6 +112,7 @@ cat > "$WORKSPACE/.docker/config.json" <<JSON
   }
 }
 JSON
+ls -la "$WORKSPACE/.docker" || true
 '''
         }
       }
@@ -120,15 +121,34 @@ JSON
     stage('Build & Push (Kaniko)') {
       steps {
         container('kaniko') {
-          sh '''#!/usr/bin/env bash
-set -euo pipefail
-export DOCKER_CONFIG="$WORKSPACE/.docker"
+          // без bash та pipefail (BusyBox sh сумісний)
+          sh '''
+set -eu
+
+# Переконаймось, що Jenkins tmp доступний (debug)
+mkdir -p "$WORKSPACE/@tmp" || true
+
+# Kaniko шукає конфіг тут:
+mkdir -p /kaniko/.docker
+if [ -f "$WORKSPACE/.docker/config.json" ]; then
+  cp "$WORKSPACE/.docker/config.json" /kaniko/.docker/config.json
+fi
+
 TAG="build-${BUILD_NUMBER}"
+
+# Трошки дебагу, якщо раптом знову впаде
+ls -la /bin || true
+ls -la /busybox || true
+id || true
+pwd
+ls -la "$WORKSPACE" || true
+
 /kaniko/executor \
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
   --cache=false
+
 echo "${TAG}" > .image_tag
 '''
         }
@@ -141,8 +161,8 @@ echo "${TAG}" > .image_tag
           withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
                                             keyFileVariable: 'SSH_KEY',
                                             usernameVariable: 'SSH_USER')]) {
-            sh '''#!/usr/bin/env bash
-set -euo pipefail
+            sh '''
+set -eu
 
 TAG="$(cat .image_tag)"
 [ -n "$TAG" ] || { echo "TAG is empty"; exit 1; }
@@ -160,6 +180,7 @@ cd "$workdir/repo"
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
+# оновлюємо тільки значення tag: у потрібному values.yaml
 sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
 
 git add "${VALUES_FILE}" || true
