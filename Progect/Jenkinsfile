@@ -65,15 +65,15 @@ spec:
   }
 
   options {
-    // щоб не було дублю "Declarative: Checkout SCM"
     skipDefaultCheckout(true)
+    buildDiscarder(logRotator(numToKeepStr: '20'))
   }
 
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'         // або 'lesson-8-9' якщо треба
+    GITOPS_BRANCH = 'lesson-8-9'
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
   }
@@ -81,18 +81,13 @@ spec:
   stages {
     stage('Checkout') {
       steps {
-        container('git-tools') {
-          checkout([$class: 'GitSCM',
-            branches: [[name: '*/lesson-8-9']],
-            userRemoteConfigs: [[url: 'https://github.com/DanSport/DevOps.git']]
-          ])
-          sh '''#!/usr/bin/env bash
+        checkout scm
+        sh '''#!/usr/bin/env bash
 set -euo pipefail
 git --version
 git config --global --add safe.directory "$WORKSPACE" || true
 git rev-parse --short HEAD || true
 '''
-        }
       }
     }
 
@@ -101,12 +96,13 @@ git rev-parse --short HEAD || true
         container('aws') {
           sh '''#!/usr/bin/env bash
 set -euo pipefail
-mkdir -p "$HOME/.docker"
+
+mkdir -p "$WORKSPACE/.docker"
 
 ECR_REGISTRY="$(echo "$ECR_URI" | awk -F'/' '{print $1}')"
 TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
 
-cat > "$HOME/.docker/config.json" <<JSON
+cat > "$WORKSPACE/.docker/config.json" <<JSON
 {
   "auths": {
     "${ECR_REGISTRY}": {
@@ -124,21 +120,15 @@ JSON
     stage('Build & Push (Kaniko)') {
       steps {
         container('kaniko') {
-          sh '''#!/bin/sh -eux
+          sh '''#!/usr/bin/env bash
+set -euo pipefail
+export DOCKER_CONFIG="$WORKSPACE/.docker"
 TAG="build-${BUILD_NUMBER}"
-
-# === FIX: зробити креденшли видимими для kaniko ===
-mkdir -p /kaniko/.docker
-if [ -f "$HOME/.docker/config.json" ]; then
-  cp "$HOME/.docker/config.json" /kaniko/.docker/config.json
-fi
-
 /kaniko/executor \
   --context="$WORKSPACE" \
   --dockerfile=Dockerfile \
   --destination="${ECR_URI}:${TAG}" \
   --cache=false
-
 echo "${TAG}" > .image_tag
 '''
         }
@@ -146,36 +136,32 @@ echo "${TAG}" > .image_tag
     }
 
     stage('Bump Helm values & Push') {
-  steps {
-    container('git-tools') {
-      withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
-                                        keyFileVariable: 'SSH_KEY',
-                                        usernameVariable: 'SSH_USER')]) {
-        sh '''#!/usr/bin/env bash
+      steps {
+        container('git-tools') {
+          withCredentials([sshUserPrivateKey(credentialsId: 'gitops-ssh',
+                                            keyFileVariable: 'SSH_KEY',
+                                            usernameVariable: 'SSH_USER')]) {
+            sh '''#!/usr/bin/env bash
 set -euo pipefail
 
 TAG="$(cat .image_tag)"
 [ -n "$TAG" ] || { echo "TAG is empty"; exit 1; }
 
-# known_hosts + права
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 chmod 644 ~/.ssh/known_hosts
 
-# Клонуємо гілку GitOps через SSH, одразу задаючи ssh-команду з ключем
 workdir="$(mktemp -d)"
 git -c core.sshCommand="ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
   clone --depth 1 --branch "${GITOPS_BRANCH}" "${GIT_SSH_URL}" "$workdir/repo"
-
 cd "$workdir/repo"
+
 git config user.name  "Jenkins CI"
 git config user.email "ci@local"
 
-# Акуратно міняємо лише значення tag: у потрібному values.yaml
 sed -E -i 's|(^[[:space:]]*tag:[[:space:]]*).*$|\\1'"${TAG}"'|' "${VALUES_FILE}"
 
-# Комітимо, якщо є зміни, і пушимо тією ж ssh-командою
 git add "${VALUES_FILE}" || true
 git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
 git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]"
@@ -183,13 +169,14 @@ git commit -m "chore(ci): bump image tag to ${TAG} [skip ci]"
 GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
   git push origin "${GITOPS_BRANCH}"
 '''
+          }
+        }
       }
     }
   }
-}
 
   post {
-    success { echo '✅ Образ у ECR запушено і bump у репозиторії виконано. Argo CD підхопить коміт.' }
+    success { echo '✅ Образ у ECR запушено і bump у гілці виконано. Argo CD підхопить коміт.' }
     failure { echo '❌ Дивись логи стадій (Checkout / ECR login / Kaniko / Push у Git).' }
   }
 }
