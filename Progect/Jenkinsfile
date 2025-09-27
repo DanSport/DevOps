@@ -64,19 +64,20 @@ spec:
     }
   }
 
+  // ці options безпечні на будь-якій версії через wrap()
   options {
-    timestamps()
-    ansiColor('xterm')
+    wrap([$class: 'AnsiColorBuildWrapper', 'colorMapName': 'xterm'])
+    wrap([$class: 'TimestamperBuildWrapper'])
   }
 
   environment {
     AWS_REGION    = 'us-east-1'
     ECR_URI       = '785434010839.dkr.ecr.us-east-1.amazonaws.com/lesson-7-ecr'
     APP_NAME      = 'django-app'
-    GITOPS_BRANCH = 'main'  // згідно з умовою — бамп у main
+    GITOPS_BRANCH = 'main'  // згідно вимоги — бамп у main
     VALUES_FILE   = 'Progect/charts/django-app/values.yaml'
     GIT_SSH_URL   = 'git@github.com:DanSport/DevOps.git'
-    DOCKER_CFG    = '/home/jenkins/agent/.docker'       // спільна для aws+kaniko
+    DOCKER_CFG    = '/home/jenkins/agent/.docker' // спільна для aws+kaniko
   }
 
   stages {
