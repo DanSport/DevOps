@@ -52,3 +52,7 @@ output "argocd_admin_password_hint" {
   value       = module.argo_cd.admin_password_hint
   description = "How to fetch initial Argo CD admin password"
 }
+
+output "db_endpoint" {
+  value = coalesce(module.rds.rds_endpoint, module.rds.aurora_endpoint)
+}

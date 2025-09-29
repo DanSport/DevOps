@@ -74,3 +74,68 @@ variable "gitops_ssh_private_key" {
   type        = string
   sensitive   = true
 }
+variable "db_use_aurora" {
+  type    = bool
+  default = false
+}
+
+variable "db_engine_base" {
+  type    = string
+  default = "postgres"
+}
+
+variable "db_engine_version" {
+  type    = string
+  default = "16.3"
+}
+
+variable "db_name_prefix" {
+  type    = string
+  default = "app-db"
+}
+
+variable "db_name" {
+  type    = string
+  default = "appdb"
+}
+
+variable "db_username" {
+  type    = string
+  default = "appuser"
+}
+
+variable "db_password" {
+  type      = string
+  default   = null
+  sensitive = true
+}
+
+variable "db_instance_class" {
+  type    = string
+  default = "db.t4g.small"
+}
+
+variable "db_storage_gb" {
+  type    = number
+  default = 20
+}
+
+variable "db_multi_az" {
+  type    = bool
+  default = false
+}
+
+variable "db_backup_retention" {
+  type    = number
+  default = 7
+}
+
+variable "db_aurora_instance_class" {
+  type    = string
+  default = "db.r6g.large"
+}
+
+variable "db_deletion_protection" {
+  type    = bool
+  default = false
+}

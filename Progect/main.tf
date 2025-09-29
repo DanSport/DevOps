@@ -184,3 +184,40 @@ module "jenkins" {
 
   depends_on = [module.eks, module.ecr]
 }
+
+module "rds" {
+  source = "./modules/rds"
+
+  name           = var.db_name_prefix
+  use_aurora     = var.db_use_aurora
+  engine_base    = var.db_engine_base       # "postgres" або "mysql"
+  engine_version = var.db_engine_version    # напр. "16.3" або "8.0.35"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  # Дозволити доступ з іншого SG (наприклад, EKS ноди). Можеш забрати, якщо не треба.
+  allowed_security_group_ids_map = {
+  eks_nodes = module.eks.node_security_group_id
+  }
+
+  # Облікові дані (пароль можна лишити null — згенерується)
+  db_name     = var.db_name
+  db_username = var.db_username
+  db_password = var.db_password
+
+  # RDS-only
+  instance_class          = var.db_instance_class
+  storage_gb              = var.db_storage_gb
+  multi_az                = var.db_multi_az
+  backup_retention_period = var.db_backup_retention
+
+  # Aurora-only
+  aurora_instance_class = var.db_aurora_instance_class
+
+  # Безпека
+  deletion_protection = var.db_deletion_protection
+  publicly_accessible = false
+
+  tags = { Project = "lesson-db-module" }
+}

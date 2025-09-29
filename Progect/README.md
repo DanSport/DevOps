@@ -307,3 +307,148 @@ terraform destroy -auto-approve
 
 <img width="1772" height="568" alt="image" src="https://github.com/user-attachments/assets/efd36371-5f04-4822-bc2f-f8208bf5b163" />
 
+# RDS/Aurora модуль — використання та змінні
+
+Цей модуль піднімає **або** звичайну RDS-інстансу (PostgreSQL/MySQL), **або** **Aurora**-кластер (writer) — залежно від прапорця `use_aurora`.
+
+---
+
+## 🔧 Приклади використання
+
+### 1) Звичайна RDS PostgreSQL
+
+  use_aurora     = false
+  
+
+### 2) Aurora PostgreSQL (кластер + writer)
+
+  use_aurora     = true
+ 
+
+### 3) Aurora MySQL (мінімум)
+```hcl
+module "rds" {
+  source = "./modules/rds"
+
+  name           = "app-aurora-mysql"
+  use_aurora     = true
+  engine_base    = "mysql"
+  engine_version = "8.0.35"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  aurora_instance_class = "db.r6g.large"
+}
+```
+
+> Після `apply` зручно мати узагальнений output у корені:
+> ```hcl
+> output "db_endpoint" {
+>   value = coalesce(module.rds.rds_endpoint, module.rds.aurora_endpoint)
+> }
+> ```
+
+---
+
+## 📤 Виводи (Outputs)
+- `db_subnet_group_name`, `security_group_id`
+- **RDS**: `rds_instance_id`, `rds_instance_arn`, `rds_endpoint`, `rds_address`
+- **Aurora**: `aurora_cluster_id`, `aurora_cluster_arn`, `aurora_endpoint`, `aurora_reader_endpoint`, `aurora_writer_instance_id`
+
+---
+
+## ⚙️ Змінні модуля з поясненнями
+
+### Основні
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `name` | `string` | Базова назва ресурсів БД. |
+| `name_prefix` | `string` \| `null` | Префікс для імен (якщо заданий — використовується в SG/Subnet Group/PG). |
+| `use_aurora` | `bool` (default: `false`) | **Перемикач**: `false` → RDS, `true` → Aurora. |
+| `engine_base` | `string` (default: `"postgres"`) | Сімейство рушія: `"postgres"` \| `"mysql"`. |
+| `engine_version` | `string` | Версія рушія (напр. `"16.3"` або `"8.0.35"`). |
+| `port` | `number` \| `null` | Порт БД (за замовчуванням 5432/3306). |
+| `db_name` | `string` (default: `"appdb"`) | Початкова база. |
+| `db_username` | `string` (default: `"appuser"`) | Користувач. |
+| `db_password` | `string` \| `null` (**sensitive**) | Пароль; якщо `null`, генерується випадковий. |
+| `tags` | `map(string)` (default: `{}`) | Додаткові теги для всіх ресурсів. |
+
+### Мережа
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `vpc_id` | `string` | ID VPC, де розгортається БД. |
+| `subnet_ids` | `list(string)` | Приватні сабнети для DB Subnet Group (2+ AZ). |
+| `allowed_cidr_blocks` | `list(string)` (default: `[]`) | CIDR’и, з яких дозволено доступ до порту БД. |
+| `allowed_security_group_ids` | `list(string)` (default: `[]`) | SG, яким дозволено доступ (рекомендовано SG→SG). |
+
+### Безпека / життєвий цикл
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `publicly_accessible` | `bool` (default: `false`) | Публічний доступ до інстансу/кластера. |
+| `backup_retention_period` | `number` (default: `7`) | Дні зберігання бекапів. |
+| `deletion_protection` | `bool` (default: `false`) | Захист від видалення. |
+| `skip_final_snapshot` | `bool` (default: `true`) | Пропуск фінального snapshot **(тільки RDS)**. |
+| `apply_immediately` | `bool` (default: `true`) | Застосовувати зміни негайно (можливий даунтайм). |
+| `iam_database_authentication_enabled` | `bool` (default: `false`) | IAM-автентифікація до БД. |
+| `maintenance_window` | `string` \| `null` | Вікно обслуговування, напр. `Sun:23:00-Mon:01:30`. |
+| `backup_window` | `string` \| `null` | Вікно бекапів, напр. `02:00-03:00`. |
+
+### Звичайна RDS (актуально, коли `use_aurora = false`)
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `instance_class` | `string` (default: `"db.t4g.small"`) | Клас інстансу RDS. |
+| `storage_gb` | `number` (default: `20`) | Розмір диска. |
+| `max_allocated_storage` | `number` (default: `0`) | Авто‑масштаб диска (0 — вимкнено). |
+| `storage_type` | `string` (default: `"gp3"`) | Тип сховища (`gp3/gp2/io1` тощо). |
+| `multi_az` | `bool` (default: `false`) | Multi‑AZ для RDS (на Aurora не впливає). |
+
+### Aurora (актуально, коли `use_aurora = true`)
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `aurora_instance_class` | `string` (default: `"db.r6g.large"`) | Клас інстансу для writer (і майбутніх reader’ів). |
+
+### Тюнінг Postgres (коли `engine_base = "postgres"`)
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `pg_max_connections` | `number` (default: `200`) | `max_connections` у параметр‑групі. |
+| `pg_log_statement` | `string` (default: `"none"`) | `none|ddl|mod|all`. |
+| `pg_work_mem` | `string` (default: `"4MB"`) | `work_mem`. |
+
+### Тюнінг MySQL (коли `engine_base = "mysql"`)
+| Змінна | Тип / Дефолт | Пояснення |
+|---|---|---|
+| `mysql_max_connections` | `number` (default: `200`) | `max_connections`. |
+| `mysql_general_log` | `bool` (default: `false`) | Ввімкнути загальний лог. |
+| `mysql_slow_query_log` | `bool` (default: `true`) | Ввімкнути slow query log. |
+| `mysql_long_query_time` | `number` (default: `2`) | Поріг повільних запитів, сек. |
+
+> Модуль автоматично обирає правильну **parameter group family** (напр. `postgres16`, `aurora-postgresql15`, `mysql8.0`, `aurora-mysql8.0`) на основі `engine_base` і `engine_version`.
+
+---
+
+## 🔁 Як перемкнути тип БД, рушій і класи інстансів
+
+### Тип БД
+- `use_aurora = false` → створюється **`aws_db_instance`** (звичайна RDS).
+- `use_aurora = true`  → створюється **`aws_rds_cluster`** + **`aws_rds_cluster_instance` (writer)**.
+> ⚠️ Перемикання зазвичай призводить до **recreate** ресурсів. Для продакшну плануйте міграцію/бекапи.
+
+### Рушій та версія
+- `engine_base = "postgres"` або `"mysql"`
+- `engine_version = "16.3"` (PG) / `"8.0.35"` (MySQL/Aurora MySQL) тощо.
+
+### Класи інстансів
+- Для RDS: `instance_class` (напр. `db.t4g.small`, `db.m7g.large`).
+- Для Aurora: `aurora_instance_class` (напр. `db.r6g.large`).
+
+### Порт і доступ
+- Порт можна перевизначити через `port` (інакше 5432/3306).
+- Доступ відкривається **або** через `allowed_security_group_ids` (рекомендовано), **або** `allowed_cidr_blocks` (обережно з `0.0.0.0/0`).
+
+---
+
+## ✅ Що створюється в будь-якому випадку
+- `aws_db_subnet_group`
+- `aws_security_group` + ingress‑правила за `allowed_*`
+- **Parameter Group** (або `aws_db_parameter_group`, або `aws_rds_cluster_parameter_group`) із базовими параметрами.
