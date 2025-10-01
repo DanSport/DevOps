@@ -139,3 +139,9 @@ variable "db_deletion_protection" {
   type    = bool
   default = false
 }
+
+variable "grafana_admin_password" {
+  description = "Пароль admin для Grafana"
+  type        = string
+  sensitive   = true
+}

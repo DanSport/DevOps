@@ -1,0 +1,49 @@
+# kube-prometheus-stack minimal sane config for EKS
+defaultRules:
+  create: true
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true
+
+prometheusOperator:
+  enabled: true
+  admissionWebhooks:
+    patch:
+      enabled: true
+
+prometheus:
+  service:
+    type: ClusterIP
+  prometheusSpec:
+    retention: ${prometheus_retention}
+    serviceMonitorSelectorNilUsesHelmValues: true
+    podMonitorSelectorNilUsesHelmValues: true
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: ${jsonencode(storage_class)}
+          resources:
+            requests:
+              storage: ${jsonencode(prometheus_pvc_size)}
+
+grafana:
+  # щоб сервіс називався просто 'grafana' як у твоїх команд
+  fullnameOverride: grafana
+  adminUser: admin
+  defaultDashboardsEnabled: true
+  service:
+    type: ${grafana_service_type}
+    port: 80
+  persistence:
+    enabled: ${grafana_persistence_enabled}
+    size: ${jsonencode(grafana_persistence_size)}
+    storageClassName: ${jsonencode(storage_class)}
+  sidecar:
+    dashboards:
+      enabled: true
+    datasources:
+      enabled: true

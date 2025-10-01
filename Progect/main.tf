@@ -221,3 +221,21 @@ module "rds" {
 
   tags = { Project = "lesson-db-module" }
 }
+
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  release_name               = "monitoring"
+  namespace                  = "monitoring"
+  grafana_admin_password     = var.grafana_admin_password
+
+  # Можеш змінювати за потреби
+  grafana_service_type       = "ClusterIP"
+  storage_class              = "gp3"
+  grafana_persistence_size   = "5Gi"
+  prometheus_retention       = "7d"
+  prometheus_pvc_size        = "20Gi"
+
+  # Можна зафіксувати версію чарту:
+  # chart_version = "XX.YY.Z"
+}

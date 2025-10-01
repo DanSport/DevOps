@@ -51,3 +51,5 @@ eks_version = "1.29"
 github_username = null
 github_token    = null
 github_repo_url = null
+
+grafana_admin_password = "ChangeMe_Strong#2025"
