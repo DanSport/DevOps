@@ -7,19 +7,42 @@ resource "helm_release" "kube_prometheus_stack" {
   create_namespace = true
   timeout          = 1200
 
-  # Рендеримо values з трафарету, підкладаємо параметри
-  values = [templatefile("${path.module}/values.yaml.tftpl", {
-    grafana_service_type        = var.grafana_service_type
-    grafana_persistence_enabled = var.grafana_persistence_enabled
-    grafana_persistence_size    = var.grafana_persistence_size
-    storage_class               = var.storage_class
-    prometheus_retention        = var.prometheus_retention
-    prometheus_pvc_size         = var.prometheus_pvc_size
-  })]
+  # читаємо звичайний values.yaml
+  values = [file("${path.module}/values.yaml")]
 
-  # Пароль не світимо у git
+  # пароль краще не класти в git — передаємо чутливо
   set_sensitive {
     name  = "grafana.adminPassword"
     value = var.grafana_admin_password
+  }
+
+  # нижче — опційні оверрайди, якщо не зашиті у values.yaml
+  set {
+    name  = "grafana.service.type"
+    value = var.grafana_service_type              # "ClusterIP" | "LoadBalancer" | "NodePort"
+  }
+  set {
+    name  = "grafana.persistence.enabled"
+    value = var.grafana_persistence_enabled ? "true" : "false"
+  }
+  set {
+    name  = "grafana.persistence.size"
+    value = var.grafana_persistence_size          # "5Gi" тощо
+  }
+  set {
+    name  = "grafana.persistence.storageClassName"
+    value = var.storage_class                     # "gp3" тощо
+  }
+  set {
+    name  = "prometheus.prometheusSpec.retention"
+    value = var.prometheus_retention              # "7d" тощо
+  }
+  set {
+    name  = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName"
+    value = var.storage_class
+  }
+  set {
+    name  = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage"
+    value = var.prometheus_pvc_size               # "20Gi" тощо
   }
 }

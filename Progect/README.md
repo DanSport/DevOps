@@ -452,3 +452,131 @@ module "rds" {
 - `aws_db_subnet_group`
 - `aws_security_group` + ingress‑правила за `allowed_*`
 - **Parameter Group** (або `aws_db_parameter_group`, або `aws_rds_cluster_parameter_group`) із базовими параметрами.
+
+
+# Моніторинг: Prometheus + Grafana (kube-prometheus-stack)
+
+
+## Що встановлюється
+
+- **Prometheus Operator** – менеджмент CRD (`ServiceMonitor`, `PodMonitor`, `PrometheusRule`).  
+- **Prometheus** – збір метрик з Kubernetes та ваших сервісів.  
+- **Alertmanager** – маршрутизація алертів (за потреби підключається e-mail/Slack).  
+- **Grafana** – готові дашборди Kubernetes (Cluster/Namespace/Pod/Node).  
+- **kube-state-metrics**, **node-exporter** – ключові джерела метрик кластера.
+
+**Збереження даних**:  
+- Prometheus: PVC розміром `prometheus_pvc_size` (напр. `20Gi`), retention `prometheus_retention` (напр. `7d`).  
+- Grafana: PVC `grafana_persistence_size` (напр. `5Gi`).  
+- StorageClass: `storage_class` (напр. `gp3`).
+
+---
+
+## Доступ і швидка перевірка
+
+```bash
+# Перевірити реліз/поди/сервіси
+helm list -n monitoring
+kubectl get pods -n monitoring
+kubectl get svc  -n monitoring
+
+# Доступ до Grafana (локально)
+kubectl -n monitoring port-forward svc/grafana 3000:80
+# Відкрити http://localhost:3000  (логін: admin, пароль: див. нижче)
+
+# Доступ до Prometheus (локально)
+kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
+# Відкрити http://localhost:9090 → Status → Targets (очікувано "UP")
+```
+
+Отримати пароль Grafana:
+```bash
+kubectl -n monitoring get secret -l app.kubernetes.io/name=grafana   -o jsonpath='{.items[0].data.admin-password}' | base64 -d; echo
+```
+(Якщо пароль задається в Terraform змінною `grafana_admin_password` — використовуйте його.)
+
+> **Зовнішній доступ**: встановіть `grafana_service_type = "LoadBalancer"` у модулі та застосуйте `terraform apply`, тоді беріть `EXTERNAL-IP` сервісу Grafana.
+
+---
+
+## Готові дашборди в Grafana
+
+- **Kubernetes / Compute Resources / Cluster, Namespace, Pod**  
+- **Nodes / Node Exporter Full**  
+- **Kubernetes / Networking / Cluster**
+
+Цих дашбордів достатньо, щоб показати стан кластера, нод, навантаження на поди/неймспейси, мережу.
+
+---
+
+## Підключення метрик застосунку
+
+Щоб Prometheus збирав метрики з вашого сервісу (наприклад, Django на `/metrics`), додайте **ServiceMonitor** у Helm-чарт застосунку:
+
+```yaml
+# charts/django-app/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: django-app
+  labels:
+    release: monitoring             # має збігатися з назвою Helm-релізу стека моніторингу
+spec:
+  namespaceSelector:
+    matchNames: [default]           # або ваш namespace застосунку
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: django-app  # лейбл Service
+  endpoints:
+    - port: http                    # ім'я порту з Service (наприклад, "http")
+      path: /metrics
+      interval: 30s
+```
+
+Після застосування `helm upgrade` або `kubectl apply` таргет з’явиться у Prometheus → **Status → Targets**.
+
+---
+
+## Автомасштабування (HPA) і метрики
+
+- **CPU/RAM HPA** працює через `metrics-server` (стандартні метрики).  
+- **Кастомні метрики** для HPA (з Prometheus) потребують **Prometheus Adapter** (необов’язково для цього проєкту; додається окремим чартом).
+
+---
+
+## Налаштування (через Terraform змінні модуля)
+
+- `grafana_service_type`: `ClusterIP` / `LoadBalancer` / `NodePort`  
+- `grafana_persistence_size`: розмір PVC Grafana (напр. `5Gi`)  
+- `prometheus_retention`: період зберігання (напр. `7d`)  
+- `prometheus_pvc_size`: розмір PVC Prometheus (напр. `20Gi`)  
+- `storage_class`: назва StorageClass (напр. `gp3`)  
+- `grafana_admin_password` (**sensitive**): пароль адміністратора Grafana
+
+---
+
+## Траблшутинг
+
+- **Targets в Prometheus “DOWN”**  
+  Переконайтесь, що `kubelet`, `kube-state-metrics`, `node-exporter` працюють (`kubectl get pods -n monitoring`). Дивіться логи оператора:  
+  `kubectl logs -n monitoring deploy/monitoring-kube-prometheus-operator`.
+
+- **PVC у статусі Pending**  
+  Невірний `storageClassName` або відсутній EBS CSI. Перевірте `StorageClass` та наявність `aws-ebs-csi-driver`.
+
+- **Не пам’ятаєте пароль Grafana**  
+  Отримайте з Kubernetes Secret (команда вище) або змініть через Terraform і `apply`.
+
+- **Port-forward не відкриває сторінку**  
+  Перевірте, що порт не зайнятий локально; використайте інший локальний порт (наприклад, `3001:80`).
+
+---
+
+## Видалення
+
+Спочатку приберіть реліз моніторингу, потім інфраструктуру:
+```bash
+terraform destroy -target=module.monitoring -auto-approve
+terraform destroy -auto-approve
+```
+> Якщо destroy блокується «DependencyViolation» (NAT/ELB/ENI) — видаліть залишки в VPC, тоді повторіть `terraform destroy`.

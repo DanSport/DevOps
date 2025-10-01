@@ -31,7 +31,6 @@ prometheus:
               storage: ${jsonencode(prometheus_pvc_size)}
 
 grafana:
-  # щоб сервіс називався просто 'grafana' як у твоїх команд
   fullnameOverride: grafana
   adminUser: admin
   defaultDashboardsEnabled: true
